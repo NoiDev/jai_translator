@@ -39,7 +39,7 @@ int main (int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    fprintf(output_file, "/* Output file generated for: %s", input_file_path);
+    fprintf(output_file, "/* Output file generated for: %s */", input_file_path);
 
     /* Load input file into memory. */
     char *input_buffer;
