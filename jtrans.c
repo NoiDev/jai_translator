@@ -28,10 +28,13 @@ int main (int argc, char *argv[]) {
 
     FILE *output_file = NULL;
     output_file = fopen(output_file_path, "w");
-    if (output_file) {
-        fprintf(output_file, "/* Output file generated for: %s", input_file_path);
-        fclose(output_file);
+    if (!output_file) {
+        printf("Unable to open output file for writing: %s", output_file_path);
+        exit(EXIT_FAILURE);
     }
+
+    fprintf(output_file, "/* Output file generated for: %s", input_file_path);
+    fclose(output_file);
 
     free(output_file_path);
 
