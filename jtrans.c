@@ -901,6 +901,9 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
     context->parse_depth++;
     bool test_for_following_expression = false;
 
+    if (parse_block_comment(&it, context))
+        test_for_following_expression = true;
+
     /* Parenthetical */
     if (it[0].type==TOKEN_TYPE_OPEN_PAREN) {
         test_for_following_expression = true;
