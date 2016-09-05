@@ -8,6 +8,8 @@
 #define GENERATE_TOKEN_FILE     1
 #define GENERATE_STRUCTURE_FILE 1
 
+#define DEFAULT_TOKEN_BUFFER_SIZE 1024
+
 typedef enum {
     /* KEYWORDS */
     TOKEN_TYPE_KEYWORD_AUTO,    /* 00 */
@@ -249,6 +251,7 @@ typedef struct {
 
 typedef struct {
     int last_token_id;
+    int token_buffer_size;
     bool empty_line;
     int line_number;
     char *line_start_at;  /* Position in input file buffer. */
@@ -258,10 +261,14 @@ typedef struct {
 } token_context;
 
 void add_token(token_type type, token *token_at, char *text, int text_length, char *input_file_at, token_context *context) {
+    context->last_token_id++;
+    if (context->last_token_id > context->token_buffer_size) {
+        return;
+    }
     char *token_text =  malloc((text_length+1)*sizeof(char));
     strncpy(token_text, text, text_length);
     token_text[text_length] = 0;
-    token_at->id = context->last_token_id++;
+    token_at->id = context->last_token_id;
     token_at->type = type;
     token_at->text = token_text;
     token_at->line_number = context->line_number;
@@ -271,6 +278,14 @@ void add_token(token_type type, token *token_at, char *text, int text_length, ch
 #if GENERATE_TOKEN_FILE
     fprintf(context->token_file, "#%i, Line: %3i, Char: %3i, Type: %3i, Text: \"%s\"\n", token_at->id, token_at->line_number, token_at->char_number, token_at->type, token_at->text);
 #endif
+}
+
+void cleanup_token_buffer(token *buffer, token *last_token) {
+    token *token_at = buffer;
+    while (token_at<last_token) {
+        free(token_at->text);
+        token_at++;
+    }
 }
 
 bool is_numeric_char(char character) {
@@ -1721,196 +1736,214 @@ int main (int argc, char *argv[]) {
     init_token_lookup_table(token_lookup);
 
     /* Tokenize Input File */
-    token token_buffer[5000];
-    token *token_at = &token_buffer[0];
+    bool reparse;
 
-    char *at = input_buffer;
+    int token_buffer_size = DEFAULT_TOKEN_BUFFER_SIZE;
+    token *token_buffer;
+    token *token_at;
 
     token_context token_context_space;
     token_context *token_context = &token_context_space;
 
+    do {
+        reparse = false;
+        token_buffer = malloc(token_buffer_size*sizeof(token));
+        token_at = token_buffer;
+
+        char *at = input_buffer;
+
 #if GENERATE_TOKEN_FILE
-    token_context->token_file = token_file;;
+        token_context->token_file = token_file;;
 #endif
-    token_context->last_token_id = 0;
-    token_context->empty_line = true;
-    token_context->line_number = 1;
-    token_context->line_start_at = at;
-    while (at[0]) {
+        token_context->last_token_id = 0;
+        token_context->token_buffer_size = token_buffer_size;
+        token_context->empty_line = true;
+        token_context->line_number = 1;
+        token_context->line_start_at = at;
 
-        /* Handle newlines and whitespace */
-        if (at[0] == ASCII_TAB || at[0] == ASCII_SPACE) {
-            at++;
-            continue;
-        } else if (at[0] == ASCII_RETURN) {
-            /* Windows and Classic Mac newlines */
-            if (at[1] == ASCII_LINE_FEED) {
+        while (at[0]) {
+
+            /* Handle newlines and whitespace */
+            if (at[0] == ASCII_TAB || at[0] == ASCII_SPACE) {
                 at++;
-            }
-            if (token_context->empty_line) {
-                add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
-                token_at++;
-            }
-            at++;
-            token_context->line_number++;
-            token_context->line_start_at = at;
-            token_context->empty_line = true;
-            continue;
-        } else if (at[0] == ASCII_LINE_FEED) {
-            /* Unix newlines */
-            if (token_context->empty_line) {
-                add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
-                token_at++;
-            }
-            at++;
-            token_context->line_number++;
-            token_context->line_start_at = at;
-            token_context->empty_line = true;
-            continue;
-        }
-        token_context->empty_line = false;
-
-        /* Detect Line-wise Comments */
-        if (at[0] == '/' && at[1] == '/') {
-            at += 2;
-            char *comment_start = at;
-            while (at[0] != ASCII_RETURN && at[0] != ASCII_LINE_FEED  && at[0] != ASCII_NULL ) {
-                at++;
-            }
-            int comment_string_length = at-comment_start;
-            add_token(TOKEN_TYPE_LINE_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
-            token_at++;
-            at++;
-            token_context->line_number++;
-            token_context->line_start_at = at;
-            token_context->empty_line = true;
-            continue;
-        }
-
-        /* Detect Block Comments */
-        if (at[0] == '/' && at[1] == '*') {
-            at += 2;
-            char *comment_start = at;
-            while (!(at[0] == '*' && at[1] == '/') && at[0] != ASCII_NULL) {
-                /* Count Lines in Block Comments */
-                if (at[0] == ASCII_RETURN) {
-                    /* Windows and Classic Mac newlines */
-                    if (at[1] == ASCII_LINE_FEED) {
-                        at++;
-                    }
-                    token_context->line_number++;
-                } else if (at[0] == ASCII_LINE_FEED) {
-                    /* Unix newlines */
-                    token_context->line_number++;
+                continue;
+            } else if (at[0] == ASCII_RETURN) {
+                /* Windows and Classic Mac newlines */
+                if (at[1] == ASCII_LINE_FEED) {
+                    at++;
+                }
+                if (token_context->empty_line) {
+                    add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
+                    token_at++;
                 }
                 at++;
+                token_context->line_number++;
                 token_context->line_start_at = at;
-            }
-            int comment_string_length = at-comment_start;
-            add_token(TOKEN_TYPE_BLOCK_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
-            token_at++;
-            at++;
-            at++;
-            continue;
-        }
-
-        /* Detect string literals */
-        if (at[0]=='"') {
-            at++;
-            char *string_start = at;
-            int contiguous_slash_count = 0;
-            while (!(at[0] == '"' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
-                if (at[0]=='\\') {
-                    contiguous_slash_count++;
-                } else {
-                    contiguous_slash_count = 0;
-                }
-                /* Count Lines in String Literals */
-                if (at[0] == ASCII_RETURN) {
-                    /* Windows and Classic Mac newlines */
-                    if (at[1] == ASCII_LINE_FEED) {
-                        at++;
-                    }
-                    token_context->line_number++;
-                } else if (at[0] == ASCII_LINE_FEED) {
-                    /* Unix newlines */
-                    token_context->line_number++;
+                token_context->empty_line = true;
+                continue;
+            } else if (at[0] == ASCII_LINE_FEED) {
+                /* Unix newlines */
+                if (token_context->empty_line) {
+                    add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
+                    token_at++;
                 }
                 at++;
+                token_context->line_number++;
+                token_context->line_start_at = at;
+                token_context->empty_line = true;
+                continue;
             }
-            int string_length = at-string_start;
-            add_token(TOKEN_TYPE_STRING_LITERAL, token_at, string_start, string_length, string_start, token_context);
-            token_at++;
-            at++;
-            continue;
-        }
+            token_context->empty_line = false;
 
-        /* Detect character literals */
-        if (at[0]=='\'') {
-            at++;
-            char *char_start = at;
-            int contiguous_slash_count = 0;
-            while (!(at[0] == '\'' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
-                if (at[0]=='\\') {
-                    contiguous_slash_count++;
-                } else {
-                    contiguous_slash_count = 0;
+            /* Detect Line-wise Comments */
+            if (at[0] == '/' && at[1] == '/') {
+                at += 2;
+                char *comment_start = at;
+                while (at[0] != ASCII_RETURN && at[0] != ASCII_LINE_FEED  && at[0] != ASCII_NULL ) {
+                    at++;
                 }
-                at++;
-            }
-            int char_length = at-char_start;
-            add_token(TOKEN_TYPE_CHARACTER_LITERAL, token_at, char_start, char_length, char_start, token_context);
-            token_at++;
-            at++;
-            continue;
-        }
-
-        /* Check for lookup table tokens */
-        bool found = false;
-        for (int token_type_index=0; token_type_index<token_lookup_count; token_type_index++) {
-            char *token_string = token_lookup[token_type_index];
-            int token_string_length = strlen(token_string);
-            if (strncmp(at, token_string, token_string_length)==0) {
-                add_token(token_type_index, token_at, token_string, token_string_length, at, token_context);
+                int comment_string_length = at-comment_start;
+                add_token(TOKEN_TYPE_LINE_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
                 token_at++;
-                at += token_string_length;
-                found = true;
-                break;
+                at++;
+                token_context->line_number++;
+                token_context->line_start_at = at;
+                token_context->empty_line = true;
+                continue;
             }
 
-        }
-        if (found) {
-            continue;
-        }
+            /* Detect Block Comments */
+            if (at[0] == '/' && at[1] == '*') {
+                at += 2;
+                char *comment_start = at;
+                while (!(at[0] == '*' && at[1] == '/') && at[0] != ASCII_NULL) {
+                    /* Count Lines in Block Comments */
+                    if (at[0] == ASCII_RETURN) {
+                        /* Windows and Classic Mac newlines */
+                        if (at[1] == ASCII_LINE_FEED) {
+                            at++;
+                        }
+                        token_context->line_number++;
+                    } else if (at[0] == ASCII_LINE_FEED) {
+                        /* Unix newlines */
+                        token_context->line_number++;
+                    }
+                    at++;
+                    token_context->line_start_at = at;
+                }
+                int comment_string_length = at-comment_start;
+                add_token(TOKEN_TYPE_BLOCK_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
+                token_at++;
+                at++;
+                at++;
+                continue;
+            }
 
-        /* Check for number */
-        char *number_start = at;
-        while (is_numeric_char(at[0])) {
+            /* Detect string literals */
+            if (at[0]=='"') {
+                at++;
+                char *string_start = at;
+                int contiguous_slash_count = 0;
+                while (!(at[0] == '"' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
+                    if (at[0]=='\\') {
+                        contiguous_slash_count++;
+                    } else {
+                        contiguous_slash_count = 0;
+                    }
+                    /* Count Lines in String Literals */
+                    if (at[0] == ASCII_RETURN) {
+                        /* Windows and Classic Mac newlines */
+                        if (at[1] == ASCII_LINE_FEED) {
+                            at++;
+                        }
+                        token_context->line_number++;
+                    } else if (at[0] == ASCII_LINE_FEED) {
+                        /* Unix newlines */
+                        token_context->line_number++;
+                    }
+                    at++;
+                }
+                int string_length = at-string_start;
+                add_token(TOKEN_TYPE_STRING_LITERAL, token_at, string_start, string_length, string_start, token_context);
+                token_at++;
+                at++;
+                continue;
+            }
+
+            /* Detect character literals */
+            if (at[0]=='\'') {
+                at++;
+                char *char_start = at;
+                int contiguous_slash_count = 0;
+                while (!(at[0] == '\'' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
+                    if (at[0]=='\\') {
+                        contiguous_slash_count++;
+                    } else {
+                        contiguous_slash_count = 0;
+                    }
+                    at++;
+                }
+                int char_length = at-char_start;
+                add_token(TOKEN_TYPE_CHARACTER_LITERAL, token_at, char_start, char_length, char_start, token_context);
+                token_at++;
+                at++;
+                continue;
+            }
+
+            /* Check for lookup table tokens */
+            bool found = false;
+            for (int token_type_index=0; token_type_index<token_lookup_count; token_type_index++) {
+                char *token_string = token_lookup[token_type_index];
+                int token_string_length = strlen(token_string);
+                if (strncmp(at, token_string, token_string_length)==0) {
+                    add_token(token_type_index, token_at, token_string, token_string_length, at, token_context);
+                    token_at++;
+                    at += token_string_length;
+                    found = true;
+                    break;
+                }
+
+            }
+            if (found) {
+                continue;
+            }
+
+            /* Check for number */
+            char *number_start = at;
+            while (is_numeric_char(at[0])) {
+                at++;
+            }
+            if (at > number_start) {
+                int number_string_length = at - number_start;
+                add_token(TOKEN_TYPE_NUMBER, token_at, number_start, number_string_length, number_start, token_context);
+                token_at++;
+                continue;
+            }
+
+            /* Check for identifier */
+            char *identifier_start = at;
+            while (is_identifier_char(at[0])) {
+                at++;
+            }
+            if (at > identifier_start) {
+                int identifier_string_length = at - identifier_start;
+                add_token(TOKEN_TYPE_IDENTIFIER, token_at, identifier_start, identifier_string_length, identifier_start, token_context);
+                token_at++;
+                continue;
+            }
+
+            /* register unrecognized token */
+            printf("Unrecognized character: \'%c\' (%i), Context: \"%.21s\"\n", at[0], (int)at[0], &at[-10]);
             at++;
         }
-        if (at > number_start) {
-            int number_string_length = at - number_start;
-            add_token(TOKEN_TYPE_NUMBER, token_at, number_start, number_string_length, number_start, token_context);
-            token_at++;
-            continue;
+        if (token_context->last_token_id > token_context->token_buffer_size) {
+            printf("Token buffer overflow! (%i > %i)\n", token_context->last_token_id, token_context->token_buffer_size);
+            printf("Resizing token buffer from %i to %i and reparsing.\n", token_context->token_buffer_size, token_context->last_token_id);
+            cleanup_token_buffer(token_buffer, &token_buffer[token_context->token_buffer_size-1]);
+            token_buffer_size = token_context->last_token_id;
+            reparse = true;
         }
-
-        /* Check for identifier */
-        char *identifier_start = at;
-        while (is_identifier_char(at[0])) {
-            at++;
-        }
-        if (at > identifier_start) {
-            int identifier_string_length = at - identifier_start;
-            add_token(TOKEN_TYPE_IDENTIFIER, token_at, identifier_start, identifier_string_length, identifier_start, token_context);
-            token_at++;
-            continue;
-        }
-
-        /* register unrecognized token */
-        printf("Unrecognized character: \'%c\' (%i), Context: \"%.21s\"\n", at[0], (int)at[0], &at[-10]);
-        at++;
-    }
+    } while (reparse);
 
 #if GENERATE_TOKEN_FILE
     fclose(token_file);
@@ -1978,13 +2011,10 @@ int main (int argc, char *argv[]) {
     /* Close up any remaning unirecognized blocks. */
     flag_recognized_structure(&token_at, context, "End of File");
 
+    int line_count = token_at[-1].line_number;
 
     /* Cleanup Token Buffer */
-    token_at = &token_buffer[0];
-    while (token_at<last_token) {
-        free(token_at->text);
-        token_at++;
-    }
+    cleanup_token_buffer(token_buffer, last_token);
 
 #if GENERATE_STRUCTURE_FILE
     fclose(structure_file);
@@ -1992,10 +2022,12 @@ int main (int argc, char *argv[]) {
     fclose(output_file);
 
     free(input_buffer);
+    free(token_buffer);
     free(output_file_path);
 
     printf("Processing Complete.\n");
-    printf("%i unrecognized syntax structure(s) found.\n", context->unrecognized_count);
+    printf("  %i lines and %i tokens parsed.\n", line_count, token_context->last_token_id);
+    printf("  %i unrecognized syntax structure(s) found.\n", context->unrecognized_count);
 
     exit(EXIT_SUCCESS);
 }
