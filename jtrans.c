@@ -234,6 +234,7 @@ void init_token_lookup_table(char *token_lookup[]) {
 
 typedef enum {
     warning_type_goto,
+    warning_type_switch,
     warning_type_count
 } warning_type;
 
@@ -249,6 +250,10 @@ void issue_warning(warning_type type) {
         case warning_type_goto:
             printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
             printf("   Note: \"goto\" statements and related labels have been left intact.\n");
+            break;
+        case warning_type_switch:
+            printf("Warning: Uses switch construct, which is currently not supported by JAI.\n");
+            printf("   Note: \"switch\", \"case\", and \"default\" statements  have been left intact.\n");
             break;
         default:
             break;
@@ -1282,6 +1287,108 @@ bool parse_goto_label(token **token_at, parse_context *context) {
     return true;
 }
 
+bool parse_switch(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    context->parse_depth++;
+    token *statement_start = it;
+
+    if (!(it[0].type == TOKEN_TYPE_KEYWORD_SWITCH && it[1].type == TOKEN_TYPE_OPEN_PAREN)) {
+        context->parse_depth--;
+        return false;
+    }
+
+    context->unsupported_count++;
+    issue_warning(warning_type_switch);
+
+    flag_recognized_structure(&it, context, "Switch Statement");
+    EMIT_TEXT("switch (");
+    eat_tokens(&it, 2); /* "if", "(" */
+
+    context->parse_depth++;
+    bool parsing = true;
+    while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
+        if (!parse_evaluable_expression(&it, context)) {
+            parsing = false;
+            flag_unrecognized_structure(&it, context, "Switch Statement: Test Value");
+        }
+    }
+    context->parse_depth--;
+    flag_recognized_structure(&it, context, "Switch Statement: End of Test Value");
+    EMIT_TEXT(") ");
+    eat_token(&it); /* ")" */
+
+    /*context->indent_depth++;*/
+    if (!parse_scope(&it, context)) {
+        flag_unrecognized_structure(&it, context, "Switch Statement: Scope");
+    }
+    /*context->indent_depth--;*/
+
+    *token_at = it;
+    context->parse_depth--;
+    return true;
+}
+
+bool parse_case(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    token *statement_start = it;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_CASE) {
+        return false;
+    }
+
+    context->unsupported_count++;
+    issue_warning(warning_type_switch);
+
+
+    flag_recognized_structure(&it, context, "Case Statement");
+    eat_token(&it);
+
+    EMIT_TEXT("\n");
+    context->indent_depth--;
+    EMIT_TEXT_INDENT("case ");
+
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        EMIT_TEXT("%s:", it[0].text);
+        eat_token(&it);
+    }
+    context->indent_depth++;
+
+    if (it[0].type == TOKEN_TYPE_COLON)
+        eat_token(&it);
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
+}
+
+bool parse_default(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    token *statement_start = it;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_DEFAULT) {
+        return false;
+    }
+
+    context->unsupported_count++;
+    issue_warning(warning_type_switch);
+
+
+    flag_recognized_structure(&it, context, "Default Statement");
+    eat_token(&it);
+
+    EMIT_TEXT("\n");
+    context->indent_depth--;
+    EMIT_TEXT_INDENT("default:");
+    context->indent_depth++;
+
+    if (it[0].type == TOKEN_TYPE_COLON)
+        eat_token(&it);
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
+}
+
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
@@ -1376,6 +1483,12 @@ bool parse_scope(token **token_at, parse_context *context) {
             if (parse_block_comment(&it, context))
                 continue;
 
+            if (parse_default(&it, context))
+                continue;
+
+            if (parse_case(&it, context))
+                continue;
+
             if (parse_goto_label(&it, context))
                 continue;
 
@@ -1392,6 +1505,9 @@ bool parse_scope(token **token_at, parse_context *context) {
                 continue;
 
             if (parse_while(&it, context))
+                continue;
+
+            if (parse_switch(&it, context))
                 continue;
 
             if (parse_goto(&it, context))
