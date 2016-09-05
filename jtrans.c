@@ -962,7 +962,7 @@ bool parse_statement(token **token_at, parse_context *context) {
         *token_at = it;
         context->parse_depth--;
         return true;
-    } 
+    }
 
     /* Assignment */
     bool parse_asignment = false;
@@ -1258,7 +1258,7 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
             it = declaration_start;
             parse_type_expression(&it, context);
             eat_token(&it); /* <name> */
-            
+
             parse_array_subscript(&it, context);
 
             if (it[0].type == TOKEN_TYPE_SEMICOLON) {
