@@ -624,7 +624,6 @@ bool parse_define(token **token_at, parse_context *context) {
 bool parse_type_expression(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
-#if 1
     type_description desc;
     desc.var_type = variable_type_void;
     desc.sign = sign_type_unspecified;
@@ -718,7 +717,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
             flag_recognized_structure(&it, context, "Type Expression");
             desc.indirection_count++;
             eat_token(&it);
-        
+
         /* No more type tokens */
         } else {
             parsing = false;
@@ -730,7 +729,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         context->parse_depth--;
         return false;
     }
-    
+
     /* resolve c-style types to jai-style types */
     if (desc.indirection_count > 0) {
         for (int i=0; i<desc.indirection_count; i++) {
@@ -738,19 +737,27 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         }
     }
 
-    if (desc.var_type == variable_type_integer) {
+    if (desc.var_type == variable_type_void && desc.sign != sign_type_unspecified)
+        desc.var_type = variable_type_integer;
+
+    if (desc.var_type == variable_type_void) {
+        EMIT_TEXT("void");
+    } else if (desc.var_type == variable_type_integer) {
+        if (desc.size < 8) {
+            desc.size = 64;
+        }
         if (desc.sign == sign_type_unspecified) {
             if (desc.size==8) {  /* char => u8 */
-                desc.sign = sign_type_unsigned; 
-            } else {             /* all other integers default to signed */
-                desc.sign = sign_type_signed; 
+                desc.sign = sign_type_unsigned;
+            } else if (desc.size > 8) {             /* all other integers default to signed */
+                desc.sign = sign_type_signed;
             }
         }
-
-        if (desc.sign == sign_type_signed)
+        if (desc.sign == sign_type_signed) {
             EMIT_TEXT("s%i", desc.size);
-        if (desc.sign == sign_type_unsigned)
+        } else if (desc.sign == sign_type_unsigned) {
             EMIT_TEXT("u%i", desc.size);
+        }
     } else if (desc.var_type == variable_type_floating_point) {
         if (desc.size <= 32) {
             EMIT_TEXT("float");
@@ -762,35 +769,13 @@ bool parse_type_expression(token **token_at, parse_context *context) {
     } else if (desc.var_type == variable_type_typedef) {
         EMIT_TEXT("%s", desc.text);
     } else {
-        printf("Unrecognized Variable Type: %i", desc.var_type);
-        assert(true);
+        printf("Unrecognized Variable Type: %i\n", desc.var_type);
+        assert(false);
     }
 
     *token_at = it;
     context->parse_depth--;
     return true;
-    
-#else
-    if (is_data_type_token(it[0]) &&                    /* @HACK */
-            it[1].type!=TOKEN_TYPE_OPEN_PAREN && 
-            it[1].type!=TOKEN_TYPE_OPEN_SQUARE_BRACE && 
-            !is_unary_postfix_operator_token(it[1])) {
-        bool found = false;
-        while (is_data_type_token(it[1]) || it[0].type==TOKEN_TYPE_STAR) {
-            found = true;
-            flag_recognized_structure(&it, context, "Type Expression Token");
-            EMIT_TEXT(" %s", it[0].text);
-            eat_token(&it);
-        }
-        if (found) {
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        }
-    }
-    context->parse_depth--;
-    return false;
-#endif
 }
 
 bool parse_array_subscript(token **token_at, parse_context *context) {
