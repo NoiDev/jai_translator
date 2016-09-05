@@ -1602,7 +1602,6 @@ bool parse_typedef(token **token_at, parse_context *context) {
 
             token *base_type_start = it;
 
-#if 1
             context->parse_mode = PARSE_MODE_NO_OUTPUT;
             parse_type_expression(&it, context);
             context->parse_mode = PARSE_MODE_OUTPUT;
@@ -1615,24 +1614,6 @@ bool parse_typedef(token **token_at, parse_context *context) {
 
                 it = base_type_start;
                 parse_type_expression(&it, context);
-#else
-            while (is_data_type_token(it[0])) {
-                eat_token(&it);
-            }
-
-            if (it[-1].type == TOKEN_TYPE_IDENTIFIER && it[0].type == TOKEN_TYPE_SEMICOLON) {
-                flag_recognized_structure(&it, context, "Typedef: General");
-                token *type_name_token = &it[-1];
-
-                EMIT_TEXT("%s ::", type_name_token->text);
-
-                it = base_type_start;
-
-                while (it != type_name_token) {
-                    EMIT_TEXT(" %s", it[0].text);
-                    eat_token(&it);
-                }
-#endif
                 eat_tokens(&it, 2); /* <name>, ";" */
 
                 EMIT_TEXT(";");
