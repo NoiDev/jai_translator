@@ -232,6 +232,29 @@ void init_token_lookup_table(char *token_lookup[]) {
 }
 
 
+typedef enum {
+    warning_type_goto,
+    warning_type_count
+} warning_type;
+
+void issue_warning(warning_type type) {
+    static int warning_counts[warning_type_count];
+
+    warning_counts[type]++;
+
+    if (warning_counts[type] > 1)
+        return;
+
+    switch (type) {
+        case warning_type_goto:
+            printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
+            printf("   Note: \"goto\" statements and related labels have been left intact.\n");
+            break;
+        default:
+            break;
+    }
+}
+
 
 /* Tokenization */
 
@@ -333,6 +356,7 @@ typedef struct {
     int last_unrecognized_line_emitted;
     char *last_input_file_char_emitted;
     int unrecognized_count;
+    int unsupported_count;
 } parse_context;
 
 /* Forward Declarations */
@@ -1219,8 +1243,8 @@ bool parse_goto(token **token_at, parse_context *context) {
         return false;
     }
 
-    printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
-    printf("Note: \"goto\" statements and related labels have been left intact.\n");
+    context->unsupported_count++;
+    issue_warning(warning_type_goto);
 
 
     flag_recognized_structure(&it, context, "Goto Statement");
@@ -1246,8 +1270,8 @@ bool parse_goto_label(token **token_at, parse_context *context) {
         return false;
     }
 
-    printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
-    printf("Note: \"goto\" statements and related labels have been left intact.\n");
+    context->unsupported_count++;
+    issue_warning(warning_type_goto);
 
     flag_recognized_structure(&it, context, "Goto Label");
     EMIT_TEXT("%s:", it[0].text);
@@ -1968,6 +1992,7 @@ int main (int argc, char *argv[]) {
     context->last_unrecognized_line_emitted = 0;
     context->last_input_file_char_emitted = &input_buffer[-1];
     context->unrecognized_count = 0;
+    context->unsupported_count = 0;
 
 
     /* Start: Parse Global Scope */
@@ -2028,6 +2053,7 @@ int main (int argc, char *argv[]) {
     printf("Processing Complete.\n");
     printf("  %i lines and %i tokens parsed.\n", line_count, token_context->last_token_id);
     printf("  %i unrecognized syntax structure(s) found.\n", context->unrecognized_count);
+    printf("  %i unsupported syntax structure(s) found.\n", context->unsupported_count);
 
     exit(EXIT_SUCCESS);
 }
