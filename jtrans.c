@@ -95,6 +95,7 @@ typedef enum {
     TOKEN_TYPE_CLOSE_ANGLE_BRACE,
     TOKEN_TYPE_SLASH,
     TOKEN_TYPE_BACKSLASH,   /* 80 */
+    TOKEN_TYPE_TERNARY,
 
     /* PREPROCESSOR */
     TOKEN_TYPE_PRE_INCLUDE,
@@ -105,8 +106,8 @@ typedef enum {
     TOKEN_TYPE_PRE_IFNDEF,
     TOKEN_TYPE_PRE_ERROR,
     TOKEN_TYPE_PRE_PRAGMA,
-    TOKEN_TYPE_PRE_FILE_MACRO,
-    TOKEN_TYPE_PRE_LINE_MACRO,  /* 90 */
+    TOKEN_TYPE_PRE_FILE_MACRO,  /* 90 */
+    TOKEN_TYPE_PRE_LINE_MACRO,
     TOKEN_TYPE_PRE_DATE_MACRO,
     TOKEN_TYPE_PRE_TIME_MACRO,
     TOKEN_TYPE_PRE_TIMESTAMP_MACRO,
@@ -117,8 +118,8 @@ typedef enum {
     TOKEN_TYPE_LINE_COMMENT,
     TOKEN_TYPE_BLOCK_COMMENT,
     TOKEN_TYPE_STRING_LITERAL,
-    TOKEN_TYPE_CHARACTER_LITERAL,
-    TOKEN_TYPE_NUMBER,          /* 100 */
+    TOKEN_TYPE_CHARACTER_LITERAL,  /* 100 */
+    TOKEN_TYPE_NUMBER,
     TOKEN_TYPE_IDENTIFIER,
     TOKEN_TYPE_BLANK_LINE,
 
@@ -218,6 +219,7 @@ void init_token_lookup_table(char *token_lookup[]) {
     token_lookup[TOKEN_TYPE_CLOSE_ANGLE_BRACE] = ">";
     token_lookup[TOKEN_TYPE_SLASH] = "/";
     token_lookup[TOKEN_TYPE_BACKSLASH] = "\\";
+    token_lookup[TOKEN_TYPE_TERNARY] = "?";
 
     /* PREPROCESSOR */
     token_lookup[TOKEN_TYPE_PRE_INCLUDE] = "#include";
@@ -242,6 +244,8 @@ void init_token_lookup_table(char *token_lookup[]) {
 typedef enum {
     warning_type_goto,
     warning_type_switch,
+    warning_type_ternary,
+
     warning_type_count
 } warning_type;
 
@@ -261,6 +265,10 @@ void issue_warning(warning_type type) {
         case warning_type_switch:
             printf("Warning: Uses switch construct, which is currently not supported by JAI.\n");
             printf("   Note: \"switch\", \"case\", and \"default\" statements  have been left intact.\n");
+            break;
+        case warning_type_ternary:
+            printf("Warning: Uses ternary operator, which is currently not supported by JAI.\n");
+            printf("   Note: Ternary statements have been left intact.\n");
             break;
         default:
             break;
@@ -992,6 +1000,23 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
             EMIT_TEXT(" %s ", it[0].text);
             eat_token(&it); /* <operator> */
             parse_evaluable_expression(&it, context);
+        }
+        if (it[0].type == TOKEN_TYPE_TERNARY) {
+
+            context->unsupported_count++;
+            issue_warning(warning_type_ternary);
+
+            flag_recognized_structure(&it, context, "Evaluable: Ternary Operator");
+            EMIT_TEXT(" %s ", it[0].text);
+            eat_token(&it); /* '?' */
+            parse_evaluable_expression(&it, context);
+            if (it[0].type == TOKEN_TYPE_COLON) {
+                flag_recognized_structure(&it, context, "Evaluable: Ternary Operator");
+                EMIT_TEXT(" %s ", it[0].text);
+                eat_token(&it); /* ':' */
+                parse_evaluable_expression(&it, context);
+
+            }
         }
         *token_at = it;
         context->parse_depth--;
