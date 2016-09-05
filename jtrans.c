@@ -1961,7 +1961,7 @@ int main (int argc, char *argv[]) {
             at++;
         }
         if (token_context->last_token_id > token_context->token_buffer_size) {
-            printf("Token buffer overflow! (%i > %i)\n", token_context->last_token_id, token_context->token_buffer_size);
+            printf("File is larger than the default token buffer (%i).\n", token_context->token_buffer_size);
             printf("Resizing token buffer from %i to %i and reparsing.\n", token_context->token_buffer_size, token_context->last_token_id);
             cleanup_token_buffer(token_buffer, &token_buffer[token_context->token_buffer_size-1]);
             token_buffer_size = token_context->last_token_id;
