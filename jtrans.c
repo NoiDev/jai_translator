@@ -941,7 +941,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
     } else if (it[0].type == TOKEN_TYPE_CHARACTER_LITERAL) {
         test_for_following_expression = true;
         flag_recognized_structure(&it, context, "Evaluable: Character Literal");
-        EMIT_TEXT("\'%s\'", it[0].text);
+        EMIT_TEXT("#char \"%s\"", it[0].text);
         eat_token(&it);
     }
 
