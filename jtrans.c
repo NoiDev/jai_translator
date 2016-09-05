@@ -1196,6 +1196,53 @@ bool parse_do(token **token_at, parse_context *context) {
     return true;
 }
 
+bool parse_goto(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    token *statement_start = it;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_GOTO) {
+        return false;
+    }
+
+    printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
+    printf("Note: \"goto\" statements and related labels have been left intact.\n");
+
+
+    flag_recognized_structure(&it, context, "Goto Statement");
+    EMIT_TEXT("goto ");
+    eat_token(&it);
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        EMIT_TEXT("%s;", it[0].text);
+        eat_token(&it);
+    }
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER)
+        eat_token(&it);
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
+}
+
+bool parse_goto_label(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    token *statement_start = it;
+
+    if (!(it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_COLON)) {
+        return false;
+    }
+
+    printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
+    printf("Note: \"goto\" statements and related labels have been left intact.\n");
+
+    flag_recognized_structure(&it, context, "Goto Label");
+    EMIT_TEXT("%s:", it[0].text);
+    eat_tokens(&it, 2);
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
+}
+
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
@@ -1290,6 +1337,9 @@ bool parse_scope(token **token_at, parse_context *context) {
             if (parse_block_comment(&it, context))
                 continue;
 
+            if (parse_goto_label(&it, context))
+                continue;
+
             EMIT_TEXT("\n");
             EMIT_TEXT_INDENT("");
 
@@ -1303,6 +1353,9 @@ bool parse_scope(token **token_at, parse_context *context) {
                 continue;
 
             if (parse_while(&it, context))
+                continue;
+
+            if (parse_goto(&it, context))
                 continue;
 
             if (parse_statement(&it, context))
