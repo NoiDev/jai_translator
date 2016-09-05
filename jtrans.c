@@ -125,6 +125,13 @@ typedef enum {
     TOKEN_TYPE_COUNT
 } token_type;
 
+bool is_keyword_token_type(token_type type) {
+    if (type >= TOKEN_TYPE_KEYWORD_AUTO && type <= TOKEN_TYPE_KEYWORD_WHILE) {
+        return true;
+    }
+    return false;
+}
+
 void init_token_lookup_table(char *token_lookup[]) {
 
     /* KEYWORDS */
@@ -2036,6 +2043,11 @@ int main (int argc, char *argv[]) {
                 char *token_string = token_lookup[token_type_index];
                 int token_string_length = strlen(token_string);
                 if (strncmp(at, token_string, token_string_length)==0) {
+                    if (is_keyword_token_type(token_type_index) &&
+                            is_identifier_char(at[token_string_length])) {
+                        /* allow keywords as substring of identifier */
+                        continue;
+                    }
                     add_token(token_type_index, token_at, token_string, token_string_length, at, token_context);
                     token_at++;
                     at += token_string_length;
