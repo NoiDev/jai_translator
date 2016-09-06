@@ -1853,10 +1853,12 @@ int main (int argc, char *argv[]) {
     char *input_file_path;
     if (argc < 2) {
         printf("Must pass a file to translate.\n");
+        printf("   e.g. jtrans file.c\n");
         exit(EXIT_FAILURE);
     } else if (argc > 2) {
-        printf("Only single file processing currently supported.\n");
+        printf("Only single file processing is currently supported.\n");
         printf("Please process one file at a time.\n");
+        printf("   e.g. jtrans file.c\n");
         exit(EXIT_FAILURE);
     } else {
         input_file_path = argv[1];
