@@ -1027,6 +1027,11 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         flag_recognized_structure(&it, context, "Evaluable: Number");
         EMIT_TEXT("%s", it[0].text);
         eat_token(&it);
+    } else if (it[0].type == TOKEN_TYPE_MINUS && it[1].type == TOKEN_TYPE_NUMBER) {
+        test_for_following_expression = true;
+        flag_recognized_structure(&it, context, "Evaluable: Negative Number");
+        EMIT_TEXT("-%s", it[1].text);
+        eat_tokens(&it, 2);
     } else if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
         test_for_following_expression = true;
         flag_recognized_structure(&it, context, "Evaluable: Identifier");
