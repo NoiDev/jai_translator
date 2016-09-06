@@ -762,9 +762,9 @@ bool parse_type_expression(token **token_at, parse_context *context) {
 
         /* Typedef */
         } else if (it[0].type == TOKEN_TYPE_IDENTIFIER &&
-                it[1].type == TOKEN_TYPE_IDENTIFIER) {
-                /*(it[1].type == TOKEN_TYPE_IDENTIFIER ||*/
-                 /*it[1].type == TOKEN_TYPE_SEMICOLON)) {*/
+                (it[1].type == TOKEN_TYPE_IDENTIFIER ||
+                 it[1].type == TOKEN_TYPE_STAR ||
+                 it[1].type == TOKEN_TYPE_CLOSE_PAREN)) {
             /* Extra check to differentiate custom types from variable names. */
             flag_recognized_structure(&it, context, "Type Expression");
             desc.var_type = variable_type_typedef;
