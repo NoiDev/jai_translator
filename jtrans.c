@@ -575,7 +575,6 @@ bool parse_blank_line(token **token_at, parse_context *context) {
     context->parse_depth++;
     if (it[0].type == TOKEN_TYPE_BLANK_LINE) {
         flag_recognized_structure(&it, context, "Blank Line");
-        EMIT_TEXT("\n");
         it++;
         *token_at = it;
         context->parse_depth--;
@@ -637,7 +636,7 @@ bool parse_include(token **token_at, parse_context *context) {
                 && it[2].type == TOKEN_TYPE_IDENTIFIER) {
             flag_recognized_structure(&it, context, "Include Library");
             char *library_name = it[2].text;
-            EMIT_TEXT("#import \"%s\";\n", library_name);
+            EMIT_TEXT("#import \"%s\";", library_name);
             eat_tokens(&it, 3);
             while (it[0].type != TOKEN_TYPE_CLOSE_ANGLE_BRACE) {
                 eat_token(&it);
@@ -662,7 +661,7 @@ bool parse_include(token **token_at, parse_context *context) {
                 converted_file_name = malloc((strlen(file_name)+1)*sizeof(char));;
                 strcpy(converted_file_name, file_name);
             }
-            EMIT_TEXT("#load \"%s\";\n", converted_file_name);
+            EMIT_TEXT("#load \"%s\";", converted_file_name);
             free(converted_file_name);
             eat_tokens(&it, 2);
 
@@ -685,7 +684,7 @@ bool parse_define(token **token_at, parse_context *context) {
              it[2].type == TOKEN_TYPE_CHARACTER_LITERAL ||
              it[2].type == TOKEN_TYPE_STRING_LITERAL)) {
         flag_recognized_structure(&it, context, "Define");
-        EMIT_TEXT("%s :: %s\n", it[1].text, it[2].text);
+        EMIT_TEXT("%s :: %s", it[1].text, it[2].text);
         eat_tokens(&it, 3);
         *token_at = it;
         context->parse_depth--;
@@ -714,7 +713,7 @@ bool parse_general_preprocessor(token **token_at, parse_context *context) {
         line_end = strchr(line_start, '\r');
     assert(line_end);
 
-    EMIT_TEXT("\n%.*s", (int)(line_end-line_start), line_start);
+    EMIT_TEXT("%.*s", (int)(line_end-line_start), line_start);
     eat_token(&it);
 
     while (it[0].line_number == line_number_of_directive) {
@@ -1489,7 +1488,6 @@ bool parse_case(token **token_at, parse_context *context) {
     flag_recognized_structure(&it, context, "Case Statement");
     eat_token(&it);
 
-    EMIT_TEXT("\n");
     context->indent_depth--;
     EMIT_TEXT_INDENT("case ");
 
@@ -1522,7 +1520,6 @@ bool parse_default(token **token_at, parse_context *context) {
     flag_recognized_structure(&it, context, "Default Statement");
     eat_token(&it);
 
-    EMIT_TEXT("\n");
     context->indent_depth--;
     EMIT_TEXT_INDENT("default:");
     context->indent_depth++;
@@ -1631,13 +1628,15 @@ bool parse_scope(token **token_at, parse_context *context) {
 
         while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
 
-            if (parse_blank_line(&it, context))
-                continue;
-
             if (parse_line_comment(&it, context))
                 continue;
 
             if (parse_block_comment(&it, context))
+                continue;
+
+            EMIT_TEXT("\n");
+
+            if (parse_blank_line(&it, context))
                 continue;
 
             if (parse_general_preprocessor(&it, context))
@@ -1652,7 +1651,6 @@ bool parse_scope(token **token_at, parse_context *context) {
             if (parse_goto_label(&it, context))
                 continue;
 
-            EMIT_TEXT("\n");
             EMIT_TEXT_INDENT("");
 
             if (parse_if(&it, context))
@@ -1717,9 +1715,9 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         if (is_static) {
             context->unsupported_count++;
             issue_warning(warning_type_static_function);
-            EMIT_TEXT("\n/* static */ %s :: (", function_name_token.text);
+            EMIT_TEXT("/* static */ %s :: (", function_name_token.text);
         } else {
-            EMIT_TEXT("\n%s :: (", function_name_token.text);
+            EMIT_TEXT("%s :: (", function_name_token.text);
         }
 
         /* Parse Argument List */
@@ -1843,13 +1841,15 @@ bool parse_enum_def(token **token_at, parse_context *context) {
             it = enum_contents_start;
             while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
 
-                if (parse_blank_line(&it, context))
-                    continue;
-
                 if (parse_line_comment(&it, context))
                     continue;
 
                 if (parse_block_comment(&it, context))
+                    continue;
+
+                EMIT_TEXT("\n");
+
+                if (parse_blank_line(&it, context))
                     continue;
 
                 if (parse_general_preprocessor(&it, context))
@@ -1857,7 +1857,6 @@ bool parse_enum_def(token **token_at, parse_context *context) {
 
                 if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
                     flag_recognized_structure(&it, context, "Enum: Contents: Identifier");
-                    EMIT_TEXT("\n");
                     EMIT_TEXT_INDENT("%s", it->text);
                     eat_token(&it);
                 } else {
@@ -1920,19 +1919,20 @@ bool parse_struct_def(token **token_at, parse_context *context) {
             it = struct_contents_start;
             while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
 
-                if (parse_blank_line(&it, context))
-                    continue;
-
                 if (parse_line_comment(&it, context))
                     continue;
 
                 if (parse_block_comment(&it, context))
                     continue;
 
+                EMIT_TEXT("\n");
+
+                if (parse_blank_line(&it, context))
+                    continue;
+
                 if (parse_general_preprocessor(&it, context))
                     continue;
 
-                EMIT_TEXT("\n");
                 EMIT_TEXT_INDENT("");
 
                 if (parse_variable_declaration(&it, context))
@@ -2333,13 +2333,15 @@ int main (int argc, char *argv[]) {
     while (token_at<last_token) {
         context->parse_depth = 0;
 
-        if (parse_blank_line(&token_at, context))
-            continue;
-
         if (parse_line_comment(&token_at, context))
             continue;
 
         if (parse_block_comment(&token_at, context))
+            continue;
+
+        EMIT_TEXT("\n");
+
+        if (parse_blank_line(&token_at, context))
             continue;
 
         /* Parse Include Statement (Libraries and Files) */
