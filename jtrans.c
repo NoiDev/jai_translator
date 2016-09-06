@@ -781,6 +781,12 @@ bool parse_type_expression(token **token_at, parse_context *context) {
             desc.indirection_count++;
             eat_token(&it);
 
+            /* Pointer indicators are the final part fo a type expression, if present. */
+            /* Stop parsing in this case. */
+            if (it[1].type != TOKEN_TYPE_STAR) {
+                parsing = false;
+            }
+
         /* No more type tokens */
         } else {
             parsing = false;
