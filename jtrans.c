@@ -424,6 +424,7 @@ typedef enum {
     variable_type_integer,
     variable_type_floating_point,
     variable_type_struct,
+    variable_type_enum,
     variable_type_typedef
 } variable_type;
 
@@ -794,6 +795,17 @@ bool parse_type_expression(token **token_at, parse_context *context) {
             desc.sign = sign_type_unsigned;
             eat_token(&it);
 
+        /* Enum */
+        } else if (it[0].type == TOKEN_TYPE_KEYWORD_ENUM) {
+            flag_recognized_structure(&it, context, "Type Expression");
+            desc.var_type = variable_type_enum;
+            if (it[1].type == TOKEN_TYPE_IDENTIFIER) {
+            flag_recognized_structure(&it, context, "Type Expression");
+                desc.text = it[1].text;
+                eat_token(&it);
+            }
+            eat_token(&it);
+
         /* Struct */
         } else if (it[0].type == TOKEN_TYPE_KEYWORD_STRUCT) {
             flag_recognized_structure(&it, context, "Type Expression");
@@ -875,6 +887,8 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         } else {
             EMIT_TEXT("float%i", desc.size);
         }
+    } else if (desc.var_type == variable_type_enum) {
+        EMIT_TEXT("enum %s", desc.text);
     } else if (desc.var_type == variable_type_struct) {
         EMIT_TEXT("struct %s", desc.text);
     } else if (desc.var_type == variable_type_typedef) {
@@ -1797,158 +1811,185 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     return false;
 }
 
+bool parse_enum_def(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    context->parse_depth++;
+    if (it[0].type != TOKEN_TYPE_KEYWORD_ENUM) {
+        context->parse_depth--;
+        return false;
+    }
+    eat_token(&it); /* "enum" */
+    if (it[0].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
+        flag_recognized_structure(&it, context, "Enum Definition");
+        eat_token(&it); /* "{" */
+
+        token *enum_contents_start = it;
+
+        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+            eat_token(&it);
+        }
+        eat_token(&it); /* "}" */
+        context->parse_mode = PARSE_MODE_OUTPUT;
+
+        context->parse_depth++;
+        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+            flag_recognized_structure(&it, context, "Enum: Name");
+            char *enum_name = it->text;
+
+            EMIT_TEXT_INDENT("%s :: enum {", enum_name);
+            context->indent_depth++;
+
+            it = enum_contents_start;
+            while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+
+                if (parse_blank_line(&it, context))
+                    continue;
+
+                if (parse_line_comment(&it, context))
+                    continue;
+
+                if (parse_block_comment(&it, context))
+                    continue;
+
+                if (parse_general_preprocessor(&it, context))
+                    continue;
+
+                if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+                    flag_recognized_structure(&it, context, "Enum: Contents: Identifier");
+                    EMIT_TEXT("\n");
+                    EMIT_TEXT_INDENT("%s", it->text);
+                    eat_token(&it);
+                } else {
+                    flag_unrecognized_structure(&it, context, "Enum: Contents");
+                    continue;
+                }
+
+                if (it[0].type == TOKEN_TYPE_NUMBER) {
+                    EMIT_TEXT(" %s", it->text);
+                    eat_token(&it);
+                }
+                if (it[0].type == TOKEN_TYPE_COMMA) {
+                    EMIT_TEXT(",");
+                    eat_token(&it);
+                }
+            }
+            context->parse_depth--;
+            flag_recognized_structure(&it, context, "Enum: Contents: End");
+            eat_tokens(&it, 3); /* "}", <name>, ";" */
+            context->indent_depth--;
+
+            EMIT_TEXT("\n");
+            EMIT_TEXT_INDENT("};");
+        }
+    }
+    *token_at = it;
+    context->parse_depth--;
+    return true;
+}
+
+bool parse_struct_def(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    context->parse_depth++;
+    if (it[0].type != TOKEN_TYPE_KEYWORD_STRUCT) {
+        context->parse_depth--;
+        return false;
+    }
+    eat_token(&it); /* "struct" */
+    if (it[0].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
+        flag_recognized_structure(&it, context, "Struct Definition");
+        eat_token(&it); /* "{" */
+
+        token *struct_contents_start = it;
+
+        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+            eat_token(&it);
+        }
+        eat_token(&it); /* "}" */
+        context->parse_mode = PARSE_MODE_OUTPUT;
+
+        context->parse_depth++;
+        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+            flag_recognized_structure(&it, context, "Struct: Name");
+            char *struct_name = it->text;
+
+            EMIT_TEXT_INDENT("%s :: struct {", struct_name);
+            context->indent_depth++;
+
+            it = struct_contents_start;
+            while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+
+                if (parse_blank_line(&it, context))
+                    continue;
+
+                if (parse_line_comment(&it, context))
+                    continue;
+
+                if (parse_block_comment(&it, context))
+                    continue;
+
+                if (parse_general_preprocessor(&it, context))
+                    continue;
+
+                EMIT_TEXT("\n");
+                EMIT_TEXT_INDENT("");
+
+                if (parse_variable_declaration(&it, context))
+                    continue;
+
+                flag_unrecognized_structure(&it, context, "Struct : Contents");
+            }
+            context->parse_depth--;
+            flag_recognized_structure(&it, context, "Struct: End of Contents");
+            eat_tokens(&it, 3); /* "}", <name>, ";" */
+            context->indent_depth--;
+
+            EMIT_TEXT("\n");
+            EMIT_TEXT_INDENT("};");
+        }
+    }
+
+    *token_at = it;
+    context->parse_depth--;
+    return true;
+}
+
 bool parse_typedef(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
-    if (it[0].type == TOKEN_TYPE_KEYWORD_TYPEDEF) {
-        if (it[1].type == TOKEN_TYPE_KEYWORD_ENUM &&
-                it[2].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
-            flag_recognized_structure(&it, context, "Typedef: Enum");
-            eat_tokens(&it, 3);
+    if (it[0].type != TOKEN_TYPE_KEYWORD_TYPEDEF) {
+        context->parse_depth--;
+        return false;
+    }
+    eat_token(&it); /* "typedef" */
 
-            token *enum_contents_start = it;
+    if (parse_enum_def(&it, context)) {
+    } else if (parse_struct_def(&it, context)) {
+    } else {
+        token *base_type_start = it;
 
-            while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-                eat_token(&it);
-            }
-            eat_token(&it);
+        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        parse_type_expression(&it, context);
+        context->parse_mode = PARSE_MODE_OUTPUT;
 
-            context->parse_depth++;
-            if (it->type == TOKEN_TYPE_IDENTIFIER) {
-                flag_recognized_structure(&it, context, "Typedef: Enum: Name");
-                char *enum_name = it->text;
+        if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_SEMICOLON) {
+            flag_recognized_structure(&it, context, "Typedef: General");
+            token *type_name_token = &it[0];
 
-                EMIT_TEXT("%s :: enum {", enum_name);
-                context->indent_depth++;
+            EMIT_TEXT("%s :: ", type_name_token->text);
 
-                it = enum_contents_start;
-                while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-
-                    if (parse_blank_line(&it, context))
-                        continue;
-
-                    if (parse_line_comment(&it, context))
-                        continue;
-
-                    if (parse_block_comment(&it, context))
-                        continue;
-
-                    if (parse_general_preprocessor(&it, context))
-                        continue;
-
-                    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-                        flag_recognized_structure(&it, context, "Typedef: Enum: Contents: Identifier");
-                        EMIT_TEXT("\n");
-                        EMIT_TEXT_INDENT("%s", it->text);
-                        eat_token(&it);
-                    } else {
-                        flag_unrecognized_structure(&it, context, "Enum Contents");
-                        continue;
-                    }
-
-                    if (it[0].type == TOKEN_TYPE_NUMBER) {
-                        EMIT_TEXT(" %s", it->text);
-                        eat_token(&it);
-                    }
-                    if (it[0].type == TOKEN_TYPE_COMMA) {
-                        EMIT_TEXT(",");
-                        eat_token(&it);
-                    }
-                }
-                context->parse_depth--;
-                flag_recognized_structure(&it, context, "Typedef: Enum: Contents: End");
-                eat_tokens(&it, 3); /* "}", <name>, ";" */
-                context->indent_depth--;
-
-                EMIT_TEXT_INDENT("\n}");
-
-                *token_at = it;
-                context->parse_depth--;
-                return true;
-            }
-        } else if (it[1].type == TOKEN_TYPE_KEYWORD_STRUCT &&
-                it[2].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
-            flag_recognized_structure(&it, context, "Typedef: Struct");
-            eat_tokens(&it, 3);
-
-            token *struct_contents_start = it;
-
-            while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-                eat_token(&it);
-            }
-            eat_token(&it);
-
-            context->parse_depth++;
-            if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-                flag_recognized_structure(&it, context, "Typedef: Struct: Name");
-                char *struct_name = it->text;
-
-                EMIT_TEXT_INDENT("\n%s :: struct {", struct_name);
-                context->indent_depth++;
-
-                it = struct_contents_start;
-                while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-
-                    if (parse_blank_line(&it, context))
-                        continue;
-
-                    if (parse_line_comment(&it, context))
-                        continue;
-
-                    if (parse_block_comment(&it, context))
-                        continue;
-
-                    if (parse_general_preprocessor(&it, context))
-                        continue;
-
-                    EMIT_TEXT("\n");
-                    EMIT_TEXT_INDENT("");
-
-                    if (parse_variable_declaration(&it, context))
-                        continue;
-
-                    flag_unrecognized_structure(&it, context, "Typedef Struct");
-                }
-                context->parse_depth--;
-                flag_recognized_structure(&it, context, "Typedef: Struct: End of Contents");
-                eat_tokens(&it, 3); /* "}", <name>, ";" */
-                context->indent_depth--;
-
-                EMIT_TEXT_INDENT("\n}");
-
-                *token_at = it;
-                context->parse_depth--;
-                return true;
-            }
-        } else {
-            eat_token(&it);
-
-            token *base_type_start = it;
-
-            context->parse_mode = PARSE_MODE_NO_OUTPUT;
+            it = base_type_start;
             parse_type_expression(&it, context);
-            context->parse_mode = PARSE_MODE_OUTPUT;
+            eat_tokens(&it, 2); /* <name>, ";" */
 
-            if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_SEMICOLON) {
-                flag_recognized_structure(&it, context, "Typedef: General");
-                token *type_name_token = &it[0];
-
-                EMIT_TEXT("%s :: ", type_name_token->text);
-
-                it = base_type_start;
-                parse_type_expression(&it, context);
-                eat_tokens(&it, 2); /* <name>, ";" */
-
-                EMIT_TEXT(";");
-
-                *token_at = it;
-                context->parse_depth--;
-                return true;
-            }
+            EMIT_TEXT(";");
         }
     }
+
+    *token_at = it;
     context->parse_depth--;
-    return false;
+    return true;
 }
 
 
@@ -2312,12 +2353,18 @@ int main (int argc, char *argv[]) {
         if (parse_general_preprocessor(&token_at, context))
             continue;
 
-        /* Parse Function Definitions */
-        if (parse_function_definition(&token_at, context))
+        /* Type Definitions */
+        if (parse_enum_def(&token_at, context))
             continue;
 
-        /* Parse Typedef */
+        if (parse_struct_def(&token_at, context))
+            continue;
+
         if (parse_typedef(&token_at, context))
+            continue;
+
+        /* Parse Function Definitions */
+        if (parse_function_definition(&token_at, context))
             continue;
 
         /* Variable Definitions */
