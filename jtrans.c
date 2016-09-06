@@ -250,6 +250,7 @@ typedef enum {
     warning_type_switch,
     warning_type_ternary,
     warning_type_preprocessor,
+    warning_type_static_function,
 
     warning_type_count
 } warning_type;
@@ -278,6 +279,9 @@ void issue_warning(warning_type type) {
         case warning_type_preprocessor:
             printf("Warning: Uses preprocessor directives that are not currently not supported by JAI.\n");
             printf("   Note: #include and some of #define are automatically translated, all others are left intact.\n");
+        case warning_type_static_function:
+            printf("Warning: Uses static functions which are not currently not supported by JAI.\n");
+            printf("   Note: Static functions will be defined as normal, with a /* static */ tag before the definition.\n");
             break;
         default:
             break;
@@ -1664,8 +1668,14 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
 
-    token *function_start = it;
     context->parse_mode = PARSE_MODE_NO_OUTPUT;
+    bool is_static = false;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
+        flag_recognized_structure(&it, context, "Function: Static");
+        is_static = true;
+        eat_token(&it);
+    }
+    token *function_start = it;
     if (parse_type_expression(&it, context)) {
         context->parse_mode = PARSE_MODE_OUTPUT;
         token function_name_token = it[0];
@@ -1674,7 +1684,13 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         flag_recognized_structure(&it, context, "Function: Start of Arguments");
         eat_token(&it); /* "(" */
 
-        EMIT_TEXT("\n%s :: (", function_name_token.text);
+        if (is_static) {
+            context->unsupported_count++;
+            issue_warning(warning_type_static_function);
+            EMIT_TEXT("\n/* static */ %s :: (", function_name_token.text);
+        } else {
+            EMIT_TEXT("\n%s :: (", function_name_token.text);
+        }
 
         /* Parse Argument List */
 
