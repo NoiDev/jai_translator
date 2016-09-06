@@ -994,7 +994,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
     /* Operators */
 
-    if (is_unary_prefix_operator_token(it[0]) && it[1].type==TOKEN_TYPE_IDENTIFIER) {
+    if (is_unary_prefix_operator_token(it[0])) {
         test_for_following_expression = true;
         flag_recognized_structure(&it, context, "Evaluable: Unary Prefix Operator");
         EMIT_TEXT("%s", it[0].text);
