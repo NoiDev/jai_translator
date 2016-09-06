@@ -400,6 +400,7 @@ typedef struct {
 
     /* @HACK */
     bool parse_type_as_argument;
+    bool extra_indent;           /* used for switch statement indents */
 } parse_context;
 
 /* Forward Declarations */
@@ -1465,11 +1466,10 @@ bool parse_switch(token **token_at, parse_context *context) {
     EMIT_TEXT(") ");
     eat_token(&it); /* ")" */
 
-    /*context->indent_depth++;*/
+    context->extra_indent = true;
     if (!parse_scope(&it, context)) {
         flag_unrecognized_structure(&it, context, "Switch Statement: Scope");
     }
-    /*context->indent_depth--;*/
 
     *token_at = it;
     context->parse_depth--;
@@ -1626,7 +1626,13 @@ bool parse_scope(token **token_at, parse_context *context) {
         flag_recognized_structure(&it, context, "Scope: Start");
         EMIT_TEXT("{");
         eat_token(&it); /* "{" */
+
+        int original_indent = context->indent_depth;
         context->indent_depth++;
+        if (context->extra_indent) {
+            context->indent_depth++;
+            context->extra_indent = false;
+        }
         context->parse_depth++;
 
         while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
@@ -1690,7 +1696,8 @@ bool parse_scope(token **token_at, parse_context *context) {
         }
         flag_recognized_structure(&it, context, "Scope: End");
         eat_token(&it); /* "}" */
-        context->indent_depth--;
+
+        context->indent_depth = original_indent;
         context->parse_depth--;
 
         EMIT_TEXT("\n");
@@ -2331,6 +2338,7 @@ int main (int argc, char *argv[]) {
     context->parse_mode = PARSE_MODE_OUTPUT;
     context->parse_depth = 0;
     context->indent_depth = 0;
+    context->extra_indent = false;
     context->line_number = 0;
     context->parse_type_as_argument = false;
     context->first_unrecognized_token = NULL;
