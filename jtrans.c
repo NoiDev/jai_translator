@@ -502,13 +502,16 @@ bool is_binary_operator_token(token it) {
 }
 
 void flag_recognized_structure(token **token_at, parse_context *context, char *structure_identifier) {
-    if (context->parse_mode == PARSE_MODE_NO_OUTPUT)
-        return;
-
     token *it = *token_at;
 
 #if GENERATE_STRUCTURE_FILE
-    fprintf(context->structure_file, "%s (%s) Token: %i, Line: %i, Char: %i \n", structure_identifier, it->text, it->id, it->line_number, it->char_number);
+    if (context->parse_mode == PARSE_MODE_OUTPUT)
+        fprintf(context->structure_file, "%s (%s) Token: %i, Line: %i, Char: %i \n", structure_identifier, it->text, it->id, it->line_number, it->char_number);
+    else
+        fprintf(context->structure_file, "HYPOTHETICAL - %s (%s) Token: %i, Line: %i, Char: %i \n", structure_identifier, it->text, it->id, it->line_number, it->char_number);
+#else
+    if (context->parse_mode == PARSE_MODE_NO_OUTPUT)
+        return;
 #endif
 
     if (context->first_unrecognized_token) {
@@ -1629,7 +1632,9 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     if (parse_type_expression(&it, context)) {
         context->parse_mode = PARSE_MODE_OUTPUT;
         token function_name_token = it[0];
+        flag_recognized_structure(&it, context, "Function: Name");
         eat_token(&it);
+        flag_recognized_structure(&it, context, "Function: Start of Arguments");
         eat_token(&it); /* "(" */
 
         EMIT_TEXT("\n%s :: (", function_name_token.text);
@@ -1657,9 +1662,11 @@ bool parse_function_definition(token **token_at, parse_context *context) {
                 context->parse_mode = PARSE_MODE_OUTPUT;
                 bool has_name = false;
                 if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+                    flag_recognized_structure(&it, context, "Function: Arguemnts: Name");
                     has_name = true;
                     EMIT_TEXT("%s: ", it[0].text);
                 } else {
+                    flag_recognized_structure(&it, context, "Function: Arguemnts: Un-Named Argument");
                     EMIT_TEXT("/* Un-Named : */ ");
                 }
                 it = argument_start;
