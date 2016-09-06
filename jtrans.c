@@ -388,6 +388,10 @@ bool is_identifier_char(char character) {
                                          context->parse_mode = PARSE_MODE_NO_OUTPUT;
 #define END_HYPOTHETICAL_PARSE_BLOCK()   context->parse_mode = PARSE_MODE_OUTPUT;
 
+/* Sets flags to allow type parsing to be more greedy for casts and sizeof statements. */
+#define BEGIN_TYPE_AS_ARGUMENT_BLOCK() context->parse_type_as_argument = true;
+#define END_TYPE_AS_ARGUMENT_BLOCK()   context->parse_type_as_argument = false;
+
 typedef struct {
     FILE *output_file;
 #if GENERATE_STRUCTURE_FILE
@@ -404,7 +408,7 @@ typedef struct {
     int unsupported_count;
 
     /* @HACK */
-    bool parse_type_as_argument;
+    bool parse_type_as_argument; /* used to imform type parsing in casts and sizeof statements */
     bool extra_indent;           /* used for switch statement indents */
 } parse_context;
 
@@ -987,7 +991,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         bool found = false;
 
         BEGIN_HYPOTHETICAL_PARSE_BLOCK();
-        context->parse_type_as_argument = true;
+        BEGIN_TYPE_AS_ARGUMENT_BLOCK();
         if (parse_type_expression(&it, context)) {
             if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
                 eat_token(&it);
@@ -1007,8 +1011,9 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
                 }
             }
         }
-        context->parse_type_as_argument = false;
+        END_TYPE_AS_ARGUMENT_BLOCK();
         END_HYPOTHETICAL_PARSE_BLOCK();
+
         if (!found) {
             EMIT_TEXT("(");
             it = parenthetical_start;
@@ -1043,11 +1048,13 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         EMIT_TEXT("%s(", it[0].text);
         eat_tokens(&it, 2); /* "sizeof", "(" */
         context->parse_depth++;
-        context->parse_type_as_argument = true;
+
+        BEGIN_TYPE_AS_ARGUMENT_BLOCK();
         if (!parse_type_expression(&it, context)) {
             flag_unrecognized_structure(&it, context, "Evaluable: sizeof: Type Expression");
         }
-        context->parse_type_as_argument = false;
+        END_TYPE_AS_ARGUMENT_BLOCK();
+
         if (it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
             flag_recognized_structure(&it, context, "Evaluable: sizeof: End");
             eat_token(&it); /* ")" */
