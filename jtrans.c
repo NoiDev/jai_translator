@@ -1321,8 +1321,8 @@ bool parse_goto(token **token_at, parse_context *context) {
         EMIT_TEXT("%s;", it[0].text);
         eat_token(&it);
     }
-    if (it[0].type == TOKEN_TYPE_IDENTIFIER)
-        eat_token(&it);
+    if (it[0].type == TOKEN_TYPE_SEMICOLON)
+        eat_token(&it); /* ";" */
 
     context->parse_depth--;
     *token_at = it;
