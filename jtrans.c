@@ -406,6 +406,9 @@ typedef struct {
 bool parse_scope();
 bool parse_variable_declaration();
 bool parse_evaluable_expression();
+bool parse_enum_def();
+bool parse_struct_def();
+bool parse_typedef();
 
 void eat_token(token **token_at) {
     token *it = *token_at;
@@ -1640,6 +1643,15 @@ bool parse_scope(token **token_at, parse_context *context) {
                 continue;
 
             if (parse_general_preprocessor(&it, context))
+                continue;
+
+            if (parse_enum_def(&it, context))
+                continue;
+
+            if (parse_struct_def(&it, context))
+                continue;
+
+            if (parse_typedef(&it, context))
                 continue;
 
             if (parse_default(&it, context))
