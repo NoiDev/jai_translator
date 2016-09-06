@@ -322,6 +322,10 @@ typedef struct {
 #endif
 } token_context;
 
+inline void eat_character(char **at) {
+    (*at)++;
+}
+
 void add_token(token_type type, token *token_at, char *text, int text_length, char *input_file_at, token_context *context) {
     context->last_token_id++;
     if (context->last_token_id > context->token_buffer_size) {
@@ -2156,18 +2160,18 @@ int main (int argc, char *argv[]) {
 
             /* Handle newlines and whitespace */
             if (at[0] == ASCII_TAB || at[0] == ASCII_SPACE) {
-                at++;
+                eat_character(&at);
                 continue;
             } else if (at[0] == ASCII_RETURN) {
                 /* Windows and Classic Mac newlines */
                 if (at[1] == ASCII_LINE_FEED) {
-                    at++;
+                    eat_character(&at);
                 }
                 if (token_context->empty_line) {
                     add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
                     token_at++;
                 }
-                at++;
+                eat_character(&at);
                 token_context->line_number++;
                 token_context->line_start_at = at;
                 token_context->empty_line = true;
@@ -2178,7 +2182,7 @@ int main (int argc, char *argv[]) {
                     add_token(TOKEN_TYPE_BLANK_LINE, token_at, "\\n", 2, at, token_context);
                     token_at++;
                 }
-                at++;
+                eat_character(&at);
                 token_context->line_number++;
                 token_context->line_start_at = at;
                 token_context->empty_line = true;
@@ -2191,12 +2195,12 @@ int main (int argc, char *argv[]) {
                 at += 2;
                 char *comment_start = at;
                 while (at[0] != ASCII_RETURN && at[0] != ASCII_LINE_FEED  && at[0] != ASCII_NULL ) {
-                    at++;
+                    eat_character(&at);
                 }
                 int comment_string_length = at-comment_start;
                 add_token(TOKEN_TYPE_LINE_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
                 token_at++;
-                at++;
+                eat_character(&at);
                 token_context->line_number++;
                 token_context->line_start_at = at;
                 token_context->empty_line = true;
@@ -2212,27 +2216,27 @@ int main (int argc, char *argv[]) {
                     if (at[0] == ASCII_RETURN) {
                         /* Windows and Classic Mac newlines */
                         if (at[1] == ASCII_LINE_FEED) {
-                            at++;
+                            eat_character(&at);
                         }
                         token_context->line_number++;
                     } else if (at[0] == ASCII_LINE_FEED) {
                         /* Unix newlines */
                         token_context->line_number++;
                     }
-                    at++;
+                    eat_character(&at);
                     token_context->line_start_at = at;
                 }
                 int comment_string_length = at-comment_start;
                 add_token(TOKEN_TYPE_BLOCK_COMMENT, token_at, comment_start, comment_string_length, comment_start, token_context);
                 token_at++;
-                at++;
-                at++;
+                eat_character(&at);
+                eat_character(&at);
                 continue;
             }
 
             /* Detect string literals */
             if (at[0]=='"') {
-                at++;
+                eat_character(&at);
                 char *string_start = at;
                 int contiguous_slash_count = 0;
                 while (!(at[0] == '"' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
@@ -2245,25 +2249,25 @@ int main (int argc, char *argv[]) {
                     if (at[0] == ASCII_RETURN) {
                         /* Windows and Classic Mac newlines */
                         if (at[1] == ASCII_LINE_FEED) {
-                            at++;
+                            eat_character(&at);
                         }
                         token_context->line_number++;
                     } else if (at[0] == ASCII_LINE_FEED) {
                         /* Unix newlines */
                         token_context->line_number++;
                     }
-                    at++;
+                    eat_character(&at);
                 }
                 int string_length = at-string_start;
                 add_token(TOKEN_TYPE_STRING_LITERAL, token_at, string_start, string_length, string_start, token_context);
                 token_at++;
-                at++;
+                eat_character(&at);
                 continue;
             }
 
             /* Detect character literals */
             if (at[0]=='\'') {
-                at++;
+                eat_character(&at);
                 char *char_start = at;
                 int contiguous_slash_count = 0;
                 while (!(at[0] == '\'' && !(contiguous_slash_count%2)) && at[0] != ASCII_NULL) {
@@ -2272,12 +2276,12 @@ int main (int argc, char *argv[]) {
                     } else {
                         contiguous_slash_count = 0;
                     }
-                    at++;
+                    eat_character(&at);
                 }
                 int char_length = at-char_start;
                 add_token(TOKEN_TYPE_CHARACTER_LITERAL, token_at, char_start, char_length, char_start, token_context);
                 token_at++;
-                at++;
+                eat_character(&at);
                 continue;
             }
 
@@ -2307,7 +2311,7 @@ int main (int argc, char *argv[]) {
             /* Check for number */
             char *number_start = at;
             while (is_numeric_char(at[0])) {
-                at++;
+                eat_character(&at);
             }
             if (at > number_start) {
                 int number_string_length = at - number_start;
@@ -2319,7 +2323,7 @@ int main (int argc, char *argv[]) {
             /* Check for identifier */
             char *identifier_start = at;
             while (is_identifier_char(at[0])) {
-                at++;
+                eat_character(&at);
             }
             if (at > identifier_start) {
                 int identifier_string_length = at - identifier_start;
@@ -2330,7 +2334,7 @@ int main (int argc, char *argv[]) {
 
             /* register unrecognized token */
             printf("Unrecognized character: \'%c\' (%i), Context: \"%.21s\"\n", at[0], (int)at[0], &at[-10]);
-            at++;
+            eat_character(&at);
         }
         if (token_context->last_token_id > token_context->token_buffer_size) {
             printf("File is larger than the default token buffer (%i).\n", token_context->token_buffer_size);
