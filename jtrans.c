@@ -421,26 +421,6 @@ typedef struct {
     char *text;
 } type_description;
 
-bool is_data_type_token(token it) {
-    if (it.type == TOKEN_TYPE_KEYWORD_VOID         ||
-            it.type == TOKEN_TYPE_KEYWORD_CHAR     ||
-            it.type == TOKEN_TYPE_KEYWORD_DOUBLE   ||
-            it.type == TOKEN_TYPE_KEYWORD_FLOAT    ||
-            it.type == TOKEN_TYPE_KEYWORD_INT      ||
-            it.type == TOKEN_TYPE_KEYWORD_LONG     ||
-            it.type == TOKEN_TYPE_KEYWORD_SHORT    ||
-            /*it.type == TOKEN_TYPE_KEYWORD_STRUCT    ||*/
-
-            it.type == TOKEN_TYPE_IDENTIFIER    ||
-
-            it.type == TOKEN_TYPE_KEYWORD_SIGNED   ||
-            it.type == TOKEN_TYPE_KEYWORD_UNSIGNED ||
-            it.type == TOKEN_TYPE_STAR) {
-        return true;
-    }
-    return false;
-}
-
 bool is_assignment_operator_token(token it) {
     if (it.type == TOKEN_TYPE_ASSIGNMENT_EQUALS          ||
             it.type == TOKEN_TYPE_ASSIGNMENT_PLUS        ||
