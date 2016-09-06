@@ -104,9 +104,11 @@ typedef enum {
     TOKEN_TYPE_PRE_IF,
     TOKEN_TYPE_PRE_IFDEF,
     TOKEN_TYPE_PRE_IFNDEF,
-    TOKEN_TYPE_PRE_ERROR,
+    TOKEN_TYPE_PRE_ELSE,
+    TOKEN_TYPE_PRE_ENDIF,
+    TOKEN_TYPE_PRE_ERROR,  /* 90 */
     TOKEN_TYPE_PRE_PRAGMA,
-    TOKEN_TYPE_PRE_FILE_MACRO,  /* 90 */
+    TOKEN_TYPE_PRE_FILE_MACRO,
     TOKEN_TYPE_PRE_LINE_MACRO,
     TOKEN_TYPE_PRE_DATE_MACRO,
     TOKEN_TYPE_PRE_TIME_MACRO,
@@ -116,9 +118,9 @@ typedef enum {
 
     /* CONTAINER TOKENS */
     TOKEN_TYPE_LINE_COMMENT,
-    TOKEN_TYPE_BLOCK_COMMENT,
+    TOKEN_TYPE_BLOCK_COMMENT,  /* 100 */
     TOKEN_TYPE_STRING_LITERAL,
-    TOKEN_TYPE_CHARACTER_LITERAL,  /* 100 */
+    TOKEN_TYPE_CHARACTER_LITERAL,
     TOKEN_TYPE_NUMBER,
     TOKEN_TYPE_IDENTIFIER,
     TOKEN_TYPE_BLANK_LINE,
@@ -228,6 +230,8 @@ void init_token_lookup_table(char *token_lookup[]) {
     token_lookup[TOKEN_TYPE_PRE_IF] = "#if";
     token_lookup[TOKEN_TYPE_PRE_IFDEF] = "#ifdef";
     token_lookup[TOKEN_TYPE_PRE_IFNDEF] = "#ifndef";
+    token_lookup[TOKEN_TYPE_PRE_ELSE] = "#else";
+    token_lookup[TOKEN_TYPE_PRE_ENDIF] = "#endif";
     token_lookup[TOKEN_TYPE_PRE_ERROR] = "#error";
     token_lookup[TOKEN_TYPE_PRE_PRAGMA] = "#pragma";
     token_lookup[TOKEN_TYPE_PRE_FILE_MACRO] = "__FILE__";
@@ -245,6 +249,7 @@ typedef enum {
     warning_type_goto,
     warning_type_switch,
     warning_type_ternary,
+    warning_type_preprocessor,
 
     warning_type_count
 } warning_type;
@@ -270,6 +275,10 @@ void issue_warning(warning_type type) {
             printf("Warning: Uses ternary operator, which is currently not supported by JAI.\n");
             printf("   Note: Ternary statements have been left intact.\n");
             break;
+        case warning_type_preprocessor:
+            printf("Warning: Uses preprocessor directives that are not currently not supported by JAI.\n");
+            printf("   Note: #include and some of #define are automatically translated, all others are left intact.\n");
+            break;
         default:
             break;
     }
@@ -290,6 +299,7 @@ typedef struct {
     char *text;
     int line_number;
     int char_number;
+    char *line_start;
 } token;
 
 typedef struct {
@@ -316,6 +326,7 @@ void add_token(token_type type, token *token_at, char *text, int text_length, ch
     token_at->text = token_text;
     token_at->line_number = context->line_number;
     token_at->char_number = input_file_at-context->line_start_at+1;
+    token_at->line_start = context->line_start_at;
     /*token_at++;*/
 
 #if GENERATE_TOKEN_FILE
@@ -420,6 +431,14 @@ typedef struct {
     int size; /* in bits */
     char *text;
 } type_description;
+
+bool is_preprocessor_token(token it) {
+    if (it.type >= TOKEN_TYPE_PRE_INCLUDE &&
+            it.type <= TOKEN_TYPE_PRE_DOUBLE_HASH) {
+        return true;
+    }
+    return false;
+}
 
 bool is_assignment_operator_token(token it) {
     if (it.type == TOKEN_TYPE_ASSIGNMENT_EQUALS          ||
@@ -664,6 +683,37 @@ bool parse_define(token **token_at, parse_context *context) {
     }
     context->parse_depth--;
     return false;
+}
+
+bool parse_general_preprocessor(token **token_at, parse_context *context) {
+    token *it = *token_at;
+    context->parse_depth++;
+    if (!is_preprocessor_token(it[0])) {
+        context->parse_depth--;
+        return false;
+    }
+
+    context->unsupported_count++;
+    issue_warning(warning_type_ternary);
+
+    int line_number_of_directive = it[0].line_number;
+
+    char *line_start = it[0].line_start;
+    char *line_end = strchr(line_start, '\n');
+    if (!line_end)
+        line_end = strchr(line_start, '\r');
+    assert(line_end);
+
+    EMIT_TEXT("\n%.*s", (int)(line_end-line_start), line_start);
+    eat_token(&it);
+
+    while (it[0].line_number == line_number_of_directive) {
+        eat_token(&it);
+    }
+
+    *token_at = it;
+    context->parse_depth--;
+    return true;
 }
 
 bool parse_type_expression(token **token_at, parse_context *context) {
@@ -1556,6 +1606,9 @@ bool parse_scope(token **token_at, parse_context *context) {
             if (parse_block_comment(&it, context))
                 continue;
 
+            if (parse_general_preprocessor(&it, context))
+                continue;
+
             if (parse_default(&it, context))
                 continue;
 
@@ -1748,6 +1801,9 @@ bool parse_typedef(token **token_at, parse_context *context) {
                     if (parse_block_comment(&it, context))
                         continue;
 
+                    if (parse_general_preprocessor(&it, context))
+                        continue;
+
                     if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
                         flag_recognized_structure(&it, context, "Typedef: Enum: Contents: Identifier");
                         EMIT_TEXT("\n");
@@ -1808,6 +1864,9 @@ bool parse_typedef(token **token_at, parse_context *context) {
                         continue;
 
                     if (parse_block_comment(&it, context))
+                        continue;
+
+                    if (parse_general_preprocessor(&it, context))
                         continue;
 
                     EMIT_TEXT("\n");
@@ -2216,6 +2275,9 @@ int main (int argc, char *argv[]) {
 
         /* Parse Preprocessor Defines */
         if (parse_define(&token_at, context))
+            continue;
+
+        if (parse_general_preprocessor(&token_at, context))
             continue;
 
         /* Parse Function Definitions */
