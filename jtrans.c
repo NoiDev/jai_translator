@@ -910,16 +910,29 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         flag_recognized_structure(&it, context, "Parentheical");
         EMIT_TEXT("(");
         eat_token(&it);
+        token *parenthetical_start = it;
+        bool found = false;
+        context->parse_mode = PARSE_MODE_NO_OUTPUT;
         if (parse_type_expression(&it, context)) {
-            test_for_following_expression = true;
-            flag_recognized_structure(&it, context, "Caste");
-            if (it[0].type == TOKEN_TYPE_CLOSE_PAREN)
+            if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
                 eat_token(&it);
-            EMIT_TEXT(")");
-            if (!parse_evaluable_expression(&it, context)) {
-                flag_unrecognized_structure(&it, context, "Object for Caste");
+                if (parse_evaluable_expression(&it, context)) { /* Check for object of caste */
+                    found = true;
+                    test_for_following_expression = true;
+
+                    context->parse_mode = PARSE_MODE_OUTPUT;
+
+                    it = parenthetical_start;
+                    flag_recognized_structure(&it, context, "Caste");
+                    parse_type_expression(&it, context);
+                    eat_token(&it); /* ")" */
+                    EMIT_TEXT(")");
+                }
             }
-        } else {
+        }
+        context->parse_mode = PARSE_MODE_OUTPUT;
+        if (!found) {
+            it = parenthetical_start;
             bool parsing = true;
             while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
 
