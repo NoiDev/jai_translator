@@ -377,6 +377,9 @@ typedef struct {
     char *last_input_file_char_emitted;
     int unrecognized_count;
     int unsupported_count;
+
+    /* @HACK */
+    bool is_caste;
 } parse_context;
 
 /* Forward Declarations */
@@ -764,7 +767,8 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         } else if (it[0].type == TOKEN_TYPE_IDENTIFIER &&
                 (it[1].type == TOKEN_TYPE_IDENTIFIER ||
                  it[1].type == TOKEN_TYPE_STAR ||
-                 it[1].type == TOKEN_TYPE_CLOSE_PAREN)) {
+                    (context->is_caste &&
+                     it[1].type == TOKEN_TYPE_CLOSE_PAREN))) {
             /* Extra check to differentiate custom types from variable names. */
             flag_recognized_structure(&it, context, "Type Expression");
             desc.var_type = variable_type_typedef;
@@ -913,9 +917,11 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         token *parenthetical_start = it;
         bool found = false;
         context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        context->is_caste = true;
         if (parse_type_expression(&it, context)) {
             if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
                 eat_token(&it);
+                context->is_caste = false;
                 if (parse_evaluable_expression(&it, context)) { /* Check for object of caste */
                     found = true;
                     test_for_following_expression = true;
@@ -924,12 +930,14 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
                     it = parenthetical_start;
                     flag_recognized_structure(&it, context, "Caste");
+                    context->is_caste = true;
                     parse_type_expression(&it, context);
                     eat_token(&it); /* ")" */
                     EMIT_TEXT(")");
                 }
             }
         }
+        context->is_caste = false;
         context->parse_mode = PARSE_MODE_OUTPUT;
         if (!found) {
             it = parenthetical_start;
@@ -2157,6 +2165,7 @@ int main (int argc, char *argv[]) {
     context->parse_depth = 0;
     context->indent_depth = 0;
     context->line_number = 0;
+    context->is_caste = false;
     context->first_unrecognized_token = NULL;
     context->last_unrecognized_line_emitted = 0;
     context->last_input_file_char_emitted = &input_buffer[-1];
