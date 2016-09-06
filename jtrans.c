@@ -383,6 +383,11 @@ bool is_identifier_char(char character) {
 #define PARSE_MODE_OUTPUT    1
 #define PARSE_MODE_NO_OUTPUT 0
 
+/* For structures that require non-trivial parising to identify before outputing. */
+#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() assert(context->parse_mode == PARSE_MODE_OUTPUT);  \
+                                         context->parse_mode = PARSE_MODE_NO_OUTPUT;
+#define END_HYPOTHETICAL_PARSE_BLOCK()   context->parse_mode = PARSE_MODE_OUTPUT;
+
 typedef struct {
     FILE *output_file;
 #if GENERATE_STRUCTURE_FILE
@@ -980,16 +985,17 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         eat_token(&it);
         token *parenthetical_start = it;
         bool found = false;
-        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         context->parse_type_as_argument = true;
         if (parse_type_expression(&it, context)) {
             if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
                 eat_token(&it);
                 context->parse_type_as_argument = false;
                 if (parse_evaluable_expression(&it, context)) { /* Check for object of cast */
-                    found = true;
+                    END_HYPOTHETICAL_PARSE_BLOCK();
 
-                    context->parse_mode = PARSE_MODE_OUTPUT;
+                    found = true;
 
                     it = parenthetical_start;
                     flag_recognized_structure(&it, context, "Caste");
@@ -1002,7 +1008,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
             }
         }
         context->parse_type_as_argument = false;
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
         if (!found) {
             EMIT_TEXT("(");
             it = parenthetical_start;
@@ -1538,7 +1544,8 @@ bool parse_default(token **token_at, parse_context *context) {
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
-    context->parse_mode = PARSE_MODE_NO_OUTPUT;
+
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
     bool is_static = false;
     if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
         flag_recognized_structure(&it, context, "Varaible: Static");
@@ -1547,7 +1554,8 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
     }
     token *declaration_start = it;
     if (parse_type_expression(&it, context)) {
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
+
         if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
             flag_recognized_structure(&it, context, "Variable Declaration");
             char *variable_name = it[0].text;
@@ -1615,7 +1623,8 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
             flag_unrecognized_structure(&it, context, "\';\' or assignment");
         }
     }
-    context->parse_mode = PARSE_MODE_OUTPUT;
+    END_HYPOTHETICAL_PARSE_BLOCK();
+
     context->parse_depth--;
     return false;
 }
@@ -1715,7 +1724,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
 
-    context->parse_mode = PARSE_MODE_NO_OUTPUT;
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
     bool is_static = false;
     if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
         flag_recognized_structure(&it, context, "Function: Static");
@@ -1724,7 +1733,8 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     }
     token *function_start = it;
     if (parse_type_expression(&it, context)) {
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
+
         token function_name_token = it[0];
         flag_recognized_structure(&it, context, "Function: Name");
         eat_token(&it);
@@ -1757,9 +1767,11 @@ bool parse_function_definition(token **token_at, parse_context *context) {
             }
 
             token *argument_start = it;
-            context->parse_mode = PARSE_MODE_NO_OUTPUT;
+
+            BEGIN_HYPOTHETICAL_PARSE_BLOCK();
             if (parse_type_expression(&it, context)) {
-                context->parse_mode = PARSE_MODE_OUTPUT;
+                END_HYPOTHETICAL_PARSE_BLOCK();
+
                 bool has_name = false;
                 if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
                     flag_recognized_structure(&it, context, "Function: Arguemnts: Name");
@@ -1774,7 +1786,8 @@ bool parse_function_definition(token **token_at, parse_context *context) {
                 if (has_name)
                     eat_token(&it); /* <name> */
             } else {
-                context->parse_mode = PARSE_MODE_OUTPUT;
+                END_HYPOTHETICAL_PARSE_BLOCK();
+
                 flag_unrecognized_structure(&it, context, "Function Argument");
             }
 
@@ -1823,7 +1836,8 @@ bool parse_function_definition(token **token_at, parse_context *context) {
             flag_unrecognized_structure(&it, context, "Function Body");
         }
     }
-    context->parse_mode = PARSE_MODE_OUTPUT;
+    END_HYPOTHETICAL_PARSE_BLOCK();
+
     context->parse_depth--;
     return false;
 }
@@ -1842,12 +1856,12 @@ bool parse_enum_def(token **token_at, parse_context *context) {
 
         token *enum_contents_start = it;
 
-        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
             eat_token(&it);
         }
         eat_token(&it); /* "}" */
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
 
         context->parse_depth++;
         if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
@@ -1920,12 +1934,12 @@ bool parse_struct_def(token **token_at, parse_context *context) {
 
         token *struct_contents_start = it;
 
-        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
             eat_token(&it);
         }
         eat_token(&it); /* "}" */
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
 
         context->parse_depth++;
         if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
@@ -1988,9 +2002,9 @@ bool parse_typedef(token **token_at, parse_context *context) {
     } else {
         token *base_type_start = it;
 
-        context->parse_mode = PARSE_MODE_NO_OUTPUT;
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         parse_type_expression(&it, context);
-        context->parse_mode = PARSE_MODE_OUTPUT;
+        END_HYPOTHETICAL_PARSE_BLOCK();
 
         if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_SEMICOLON) {
             flag_recognized_structure(&it, context, "Typedef: General");
