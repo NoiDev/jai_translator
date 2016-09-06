@@ -251,6 +251,7 @@ typedef enum {
     warning_type_ternary,
     warning_type_preprocessor,
     warning_type_static_function,
+    warning_type_static_variable,
 
     warning_type_count
 } warning_type;
@@ -282,6 +283,10 @@ void issue_warning(warning_type type) {
         case warning_type_static_function:
             printf("Warning: Uses static functions which are not currently not supported by JAI.\n");
             printf("   Note: Static functions will be defined as normal, with a /* static */ tag before the definition.\n");
+            break;
+        case warning_type_static_variable:
+            printf("Warning: Uses static variables which are not currently not supported by JAI.\n");
+            printf("   Note: Static variables will be defined as normal, with a /* static */ tag before the definition.\n");
             break;
         default:
             break;
@@ -1519,13 +1524,24 @@ bool parse_default(token **token_at, parse_context *context) {
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
-    token *declaration_start = it;
     context->parse_mode = PARSE_MODE_NO_OUTPUT;
+    bool is_static = false;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
+        flag_recognized_structure(&it, context, "Varaible: Static");
+        is_static = true;
+        eat_token(&it);
+    }
+    token *declaration_start = it;
     if (parse_type_expression(&it, context)) {
         context->parse_mode = PARSE_MODE_OUTPUT;
         if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
             flag_recognized_structure(&it, context, "Variable Declaration");
             char *variable_name = it[0].text;
+            if (is_static) {
+                context->unsupported_count++;
+                issue_warning(warning_type_static_variable);
+                EMIT_TEXT("/* static */ ");
+            }
             EMIT_TEXT("%s : ", variable_name);
 
             it = declaration_start;
