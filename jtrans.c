@@ -379,7 +379,7 @@ typedef struct {
     int unsupported_count;
 
     /* @HACK */
-    bool is_cast;
+    bool parse_type_as_argument;
 } parse_context;
 
 /* Forward Declarations */
@@ -767,7 +767,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         } else if (it[0].type == TOKEN_TYPE_IDENTIFIER &&
                 (it[1].type == TOKEN_TYPE_IDENTIFIER ||
                  it[1].type == TOKEN_TYPE_STAR ||
-                    (context->is_cast &&
+                    (context->parse_type_as_argument &&
                      it[1].type == TOKEN_TYPE_CLOSE_PAREN))) {
             /* Extra check to differentiate custom types from variable names. */
             flag_recognized_structure(&it, context, "Type Expression");
@@ -922,11 +922,11 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         token *parenthetical_start = it;
         bool found = false;
         context->parse_mode = PARSE_MODE_NO_OUTPUT;
-        context->is_cast = true;
+        context->parse_type_as_argument = true;
         if (parse_type_expression(&it, context)) {
             if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
                 eat_token(&it);
-                context->is_cast = false;
+                context->parse_type_as_argument = false;
                 if (parse_evaluable_expression(&it, context)) { /* Check for object of cast */
                     found = true;
 
@@ -935,14 +935,14 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
                     it = parenthetical_start;
                     flag_recognized_structure(&it, context, "Caste");
                     EMIT_TEXT("cast(");
-                    context->is_cast = true;
+                    context->parse_type_as_argument = true;
                     parse_type_expression(&it, context);
                     eat_token(&it); /* ")" */
                     EMIT_TEXT(") ");
                 }
             }
         }
-        context->is_cast = false;
+        context->parse_type_as_argument = false;
         context->parse_mode = PARSE_MODE_OUTPUT;
         if (!found) {
             EMIT_TEXT("(");
@@ -971,8 +971,32 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
     }
 
 
+    /* sizeof */
+    if (it[0].type == TOKEN_TYPE_KEYWORD_SIZEOF && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
+        test_for_following_expression = true;
+        flag_recognized_structure(&it, context, "Evaluable: sizeof");
+        EMIT_TEXT("%s(", it[0].text);
+        eat_tokens(&it, 2); /* "sizeof", "(" */
+        context->parse_depth++;
+        context->parse_type_as_argument = true;
+        if (!parse_type_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Evaluable: sizeof: Type Expression");
+        }
+        context->parse_type_as_argument = false;
+        if (it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
+            flag_recognized_structure(&it, context, "Evaluable: sizeof: End");
+            eat_token(&it); /* ")" */
+        }
+        context->parse_depth--;
+        EMIT_TEXT(")");
+        eat_token(&it); /* ")" */
+    }
+
+
+
     /* Function Call */
-    if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
+    if ((it[0].type == TOKEN_TYPE_IDENTIFIER || it[0].type == TOKEN_TYPE_KEYWORD_SIZEOF)
+            && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
         test_for_following_expression = true;
         flag_recognized_structure(&it, context, "Evaluable: Function");
         EMIT_TEXT("%s(", it[0].text);
@@ -2173,7 +2197,7 @@ int main (int argc, char *argv[]) {
     context->parse_depth = 0;
     context->indent_depth = 0;
     context->line_number = 0;
-    context->is_cast = false;
+    context->parse_type_as_argument = false;
     context->first_unrecognized_token = NULL;
     context->last_unrecognized_line_emitted = 0;
     context->last_input_file_char_emitted = &input_buffer[-1];
