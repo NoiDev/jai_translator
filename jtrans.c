@@ -998,8 +998,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
 
     /* Function Call */
-    if ((it[0].type == TOKEN_TYPE_IDENTIFIER || it[0].type == TOKEN_TYPE_KEYWORD_SIZEOF)
-            && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
         test_for_following_expression = true;
         flag_recognized_structure(&it, context, "Evaluable: Function");
         EMIT_TEXT("%s(", it[0].text);
