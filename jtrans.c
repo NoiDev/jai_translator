@@ -322,7 +322,7 @@ typedef struct {
 #endif
 } token_context;
 
-inline void eat_character(char **at) {
+void eat_character(char **at) {
     (*at)++;
 }
 
@@ -388,8 +388,7 @@ bool is_identifier_char(char character) {
 #define PARSE_MODE_NO_OUTPUT 0
 
 /* For structures that require non-trivial parising to identify before outputing. */
-#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() assert(context->parse_mode == PARSE_MODE_OUTPUT);  \
-                                         context->parse_mode = PARSE_MODE_NO_OUTPUT;
+#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() context->parse_mode = PARSE_MODE_NO_OUTPUT;
 #define END_HYPOTHETICAL_PARSE_BLOCK()   context->parse_mode = PARSE_MODE_OUTPUT;
 
 /* Sets flags to allow type parsing to be more greedy for casts and sizeof statements. */
@@ -555,7 +554,7 @@ void flag_unrecognized_structure(token **token_at, parse_context *context, char 
     token *it = *token_at;
 
 #if GENERATE_STRUCTURE_FILE
-    fprintf(context->structure_file, "***UNREC %i (%s) Exp:%s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
+    fprintf(context->structure_file, "***UNREC %i (%s) Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
 #endif
 
     if (!context->first_unrecognized_token) {
@@ -589,135 +588,158 @@ void flag_unrecognized_structure(token **token_at, parse_context *context, char 
 
 bool parse_blank_line(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type == TOKEN_TYPE_BLANK_LINE) {
-        flag_recognized_structure(&it, context, "Blank Line");
-        it++;
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+
+    if (it[0].type != TOKEN_TYPE_BLANK_LINE) {
+        return false;
     }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Blank Line");
+    eat_token(&it);
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_line_comment(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type == TOKEN_TYPE_LINE_COMMENT) {
-        flag_recognized_structure(&it, context, "Line Comment");
-        if (it[-1].line_number == it[0].line_number) {
-            EMIT_TEXT("  //%s", it->text);
-        } else {
-            EMIT_TEXT("\n");
-            EMIT_TEXT_INDENT("//%s", it->text);
-        }
-        it++;
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+
+    if (it[0].type != TOKEN_TYPE_LINE_COMMENT) {
+        return false;
     }
+    context->parse_depth++;
+
+    token *comment_token = it;
+
+    flag_recognized_structure(&it, context, "Line Comment");
+    eat_token(&it);
+
+    if (comment_token[-1].line_number == comment_token[0].line_number) {
+        EMIT_TEXT("  //%s", comment_token->text);
+    } else {
+        EMIT_TEXT("\n");
+        EMIT_TEXT_INDENT("//%s", comment_token->text);
+    }
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_block_comment(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type == TOKEN_TYPE_BLOCK_COMMENT) {
-        flag_recognized_structure(&it, context, "Block Comment");
-        if (it[-1].line_number == it[0].line_number) {
-            if (it[0].line_number == it[1].line_number) {
-                EMIT_TEXT("/*%s*/", it->text);
-            } else {
-                EMIT_TEXT("  /*%s*/", it->text);
-            }
-        } else {
-            EMIT_TEXT("\n");
-            EMIT_TEXT_INDENT("/*%s*/", it->text);
-        }
-        it++;
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+
+    if (it[0].type != TOKEN_TYPE_BLOCK_COMMENT) {
+        return false;
     }
+    context->parse_depth++;
+
+    token *comment_token = it;
+
+    flag_recognized_structure(&it, context, "Block Comment");
+    eat_token(&it);
+
+    if (comment_token[-1].line_number == comment_token[0].line_number) {
+        if (comment_token[0].line_number == comment_token[1].line_number) {
+            EMIT_TEXT("/*%s*/", comment_token->text);
+        } else {
+            EMIT_TEXT("  /*%s*/", comment_token->text);
+        }
+    } else {
+        EMIT_TEXT("\n");
+        EMIT_TEXT_INDENT("/*%s*/", comment_token->text);
+    }
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_include(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type == TOKEN_TYPE_PRE_INCLUDE) {
-        if (it[1].type == TOKEN_TYPE_OPEN_ANGLE_BRACE
-                && it[2].type == TOKEN_TYPE_IDENTIFIER) {
-            flag_recognized_structure(&it, context, "Include Library");
-            char *library_name = it[2].text;
-            EMIT_TEXT("#import \"%s\";", library_name);
-            eat_tokens(&it, 3);
-            while (it[0].type != TOKEN_TYPE_CLOSE_ANGLE_BRACE) {
-                eat_token(&it);
-            }
-            eat_token(&it); /* ">" */
 
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        } else if (it[1].type == TOKEN_TYPE_STRING_LITERAL) {
-            flag_recognized_structure(&it, context, "Include File");
-            char *file_name = it[1].text;
-            char *file_ext = strchr(file_name, '.');
-            char *converted_file_name;
-            if (file_ext) {
-                int base_name_length = file_ext-file_name;
-                converted_file_name = malloc((base_name_length+5)*sizeof(char));;
-                strncpy(converted_file_name, file_name, base_name_length);
-                converted_file_name[base_name_length] = 0;
-                strcat(converted_file_name, ".jai");
-            } else {
-                converted_file_name = malloc((strlen(file_name)+1)*sizeof(char));;
-                strcpy(converted_file_name, file_name);
-            }
-            EMIT_TEXT("#load \"%s\";", converted_file_name);
-            free(converted_file_name);
-            eat_tokens(&it, 2);
-
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        }
+    if (it[0].type != TOKEN_TYPE_PRE_INCLUDE) {
+        return false;
     }
+    context->parse_depth++;
+
+    /* Library Includes */
+    if (it[1].type == TOKEN_TYPE_OPEN_ANGLE_BRACE
+            && it[2].type == TOKEN_TYPE_IDENTIFIER) {
+        flag_recognized_structure(&it, context, "Include Library");
+        char *library_name = it[2].text;
+        EMIT_TEXT("#import \"%s\";", library_name);
+        eat_tokens(&it, 3);
+        while (it[0].type != TOKEN_TYPE_CLOSE_ANGLE_BRACE) {
+            eat_token(&it);
+        }
+        eat_token(&it); /* ">" */
+
+    /* File Includes */
+    } else if (it[1].type == TOKEN_TYPE_STRING_LITERAL) {
+        flag_recognized_structure(&it, context, "Include File");
+        char *file_name = it[1].text;
+        char *file_ext = strchr(file_name, '.');
+        char *converted_file_name;
+        if (file_ext) {
+            int base_name_length = file_ext-file_name;
+            converted_file_name = malloc((base_name_length+5)*sizeof(char));;
+            strncpy(converted_file_name, file_name, base_name_length);
+            converted_file_name[base_name_length] = 0;
+            strcat(converted_file_name, ".jai");
+        } else {
+            converted_file_name = malloc((strlen(file_name)+1)*sizeof(char));;
+            strcpy(converted_file_name, file_name);
+        }
+        EMIT_TEXT("#load \"%s\";", converted_file_name);
+        free(converted_file_name);
+        eat_tokens(&it, 2);
+    }
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_define(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+
+    bool is_translatable_define = false;
+
     if (it[0].type == TOKEN_TYPE_PRE_DEFINE &&
             it[1].type == TOKEN_TYPE_IDENTIFIER &&
             (it[2].type == TOKEN_TYPE_IDENTIFIER ||
              it[2].type == TOKEN_TYPE_NUMBER     ||
              it[2].type == TOKEN_TYPE_CHARACTER_LITERAL ||
              it[2].type == TOKEN_TYPE_STRING_LITERAL)) {
-        flag_recognized_structure(&it, context, "Define");
-        EMIT_TEXT("%s :: %s", it[1].text, it[2].text);
-        eat_tokens(&it, 3);
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+        is_translatable_define = true;
     }
+
+    if (!is_translatable_define) {
+        return false;
+    }
+    context->parse_depth++;
+
+    token *define_token = it;
+
+    flag_recognized_structure(&it, context, "Define");
+    eat_tokens(&it, 3);
+
+    EMIT_TEXT("%s :: %s", define_token[1].text, define_token[2].text);
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_general_preprocessor(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+
     if (!is_preprocessor_token(it[0])) {
-        context->parse_depth--;
         return false;
     }
+    context->parse_depth++;
 
     context->unsupported_count++;
     issue_warning(warning_type_ternary);
@@ -737,15 +759,17 @@ bool parse_general_preprocessor(token **token_at, parse_context *context) {
         eat_token(&it);
     }
 
-    *token_at = it;
     context->parse_depth--;
+    *token_at = it;
     return true;
 }
 
 bool parse_type_expression(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
+
     type_description desc;
+
     desc.var_type = variable_type_void;
     desc.sign = sign_type_unspecified;
     desc.indirection_count = 0;
@@ -886,7 +910,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
             desc.size = 64;
         }
         if (desc.sign == sign_type_unspecified) {
-            if (desc.size==8) {  /* char => u8 */
+            if (desc.size==8) {                     /* char => u8 */
                 desc.sign = sign_type_unsigned;
             } else if (desc.size > 8) {             /* all other integers default to signed */
                 desc.sign = sign_type_signed;
@@ -914,45 +938,50 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         assert(false);
     }
 
-    *token_at = it;
     context->parse_depth--;
+    *token_at = it;
     return true;
 }
 
 bool parse_array_subscript(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type==TOKEN_TYPE_OPEN_SQUARE_BRACE) {
-        while (it[0].type==TOKEN_TYPE_OPEN_SQUARE_BRACE) {
-            eat_token(&it); /* "[" */
-            EMIT_TEXT("[");
-            if (!parse_evaluable_expression(&it, context)) {
-                flag_unrecognized_structure(&it, context, "Array Subscript Expression");
-            }
-            if (it[0].type == TOKEN_TYPE_CLOSE_SQUARE_BRACE) {
-                eat_token(&it); /* "]" */
-                flag_recognized_structure(&it, context, "Array Subscript: End");
-                EMIT_TEXT("]");
-            } else {
-                flag_unrecognized_structure(&it, context, "Array Subscript: End");
-            }
-        }
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+
+    if (it[0].type != TOKEN_TYPE_OPEN_SQUARE_BRACE) {
+        return false;
     }
-    return false;
+    context->parse_depth++;
+
+    while (it[0].type==TOKEN_TYPE_OPEN_SQUARE_BRACE) {
+        eat_token(&it); /* "[" */
+        EMIT_TEXT("[");
+        if (!parse_evaluable_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Array Subscript Expression");
+        }
+        if (it[0].type == TOKEN_TYPE_CLOSE_SQUARE_BRACE) {
+            eat_token(&it); /* "]" */
+            flag_recognized_structure(&it, context, "Array Subscript: End");
+            EMIT_TEXT("]");
+        } else {
+            flag_unrecognized_structure(&it, context, "Array Subscript: End");
+        }
+    }
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
 }
 
 bool parse_subscripts_and_dereferences(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
+
     bool found = false;
     bool parsing = true;
+
     while (parsing) {
         parsing = false;
 
-        /* subscripts */
+        /* Subscripts */
         if (parse_array_subscript(&it, context)) {
             found = true;
             parsing = true;
@@ -965,7 +994,7 @@ bool parse_subscripts_and_dereferences(token **token_at, parse_context *context)
             EMIT_TEXT(".%s", it[1].text);
             eat_tokens(&it, 2);  /* '.', <name> */
 
-            /* Pointer Dereference */
+        /* Pointer Dereference */
         } else if (it[0].type == TOKEN_TYPE_ARROW && it[1].type == TOKEN_TYPE_IDENTIFIER) {
             found = true;
             parsing = true;
@@ -973,6 +1002,7 @@ bool parse_subscripts_and_dereferences(token **token_at, parse_context *context)
             eat_tokens(&it, 2);  /* '->', <name> */
         }
     }
+
     context->parse_depth--;
     *token_at = it;
     return found;
@@ -980,19 +1010,23 @@ bool parse_subscripts_and_dereferences(token **token_at, parse_context *context)
 
 bool parse_evaluable_expression(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    bool test_for_following_expression = false;
 
-    if (parse_block_comment(&it, context))
-        test_for_following_expression = true;
+    context->parse_depth++;
+
+    bool found = false;
+
+    /* Block Comment */
+    if (parse_block_comment(&it, context)) {
+        found = true;
+    }
 
     /* Parenthetical */
     if (it[0].type==TOKEN_TYPE_OPEN_PAREN) {
-        test_for_following_expression = true;
+        found = true;
         flag_recognized_structure(&it, context, "Parentheical");
         eat_token(&it);
         token *parenthetical_start = it;
-        bool found = false;
+        bool cast = false;
 
         BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         BEGIN_TYPE_AS_ARGUMENT_BLOCK();
@@ -1003,55 +1037,68 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
                 if (parse_evaluable_expression(&it, context)) { /* Check for object of cast */
                     END_HYPOTHETICAL_PARSE_BLOCK();
 
-                    found = true;
+                    cast = true;
 
                     it = parenthetical_start;
                     flag_recognized_structure(&it, context, "Caste");
                     EMIT_TEXT("cast(");
                     context->parse_type_as_argument = true;
                     parse_type_expression(&it, context);
-                    eat_token(&it); /* ")" */
-                    EMIT_TEXT(") ");
                 }
             }
         }
         END_TYPE_AS_ARGUMENT_BLOCK();
         END_HYPOTHETICAL_PARSE_BLOCK();
 
-        if (!found) {
+        if (!cast) {
             EMIT_TEXT("(");
             it = parenthetical_start;
             bool parsing = true;
             while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
 
-                if (!parse_evaluable_expression(&it, context))
+                if (!parse_evaluable_expression(&it, context)) {
                     parsing = false;
+                    flag_unrecognized_structure(&it, context, "Evaluable Expression in Parenthetical");
+                }
             }
+        }
+
+        if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
             flag_recognized_structure(&it, context, "Parentheical: End");
-            EMIT_TEXT(")");
             eat_token(&it);
         }
+        EMIT_TEXT(")");
     }
 
-    /* Operators */
-
+    /* Prefix Operators */
     if (is_unary_prefix_operator_token(it[0])) {
-        test_for_following_expression = true;
+        found = true;
+
+        token *operator_token = it;
+
         flag_recognized_structure(&it, context, "Evaluable: Unary Prefix Operator");
-        EMIT_TEXT("%s", it[0].text);
         eat_token(&it); /* <operator> */
 
-        parse_evaluable_expression(&it, context);
+        EMIT_TEXT("%s", operator_token->text);
+
+        if (!parse_evaluable_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Evaluable Expression After Unary Prefix Operator");
+        }
     }
 
 
     /* sizeof */
-    if (it[0].type == TOKEN_TYPE_KEYWORD_SIZEOF && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        test_for_following_expression = true;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_SIZEOF) {
+        found = true;
+
         flag_recognized_structure(&it, context, "Evaluable: sizeof");
-        EMIT_TEXT("%s(", it[0].text);
-        eat_tokens(&it, 2); /* "sizeof", "(" */
-        context->parse_depth++;
+        eat_token(&it); /* "sizeof" */
+
+        if (it[0].type == TOKEN_TYPE_OPEN_PAREN) {
+            eat_token(&it); /* "(" */
+        }
+
+        EMIT_TEXT("sizeof(");
 
         BEGIN_TYPE_AS_ARGUMENT_BLOCK();
         if (!parse_type_expression(&it, context)) {
@@ -1059,118 +1106,178 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         }
         END_TYPE_AS_ARGUMENT_BLOCK();
 
-        if (it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
+        if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
             flag_recognized_structure(&it, context, "Evaluable: sizeof: End");
             eat_token(&it); /* ")" */
         }
-        context->parse_depth--;
+
         EMIT_TEXT(")");
-        eat_token(&it); /* ")" */
     }
 
 
 
     /* Function Call */
     if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        test_for_following_expression = true;
-        flag_recognized_structure(&it, context, "Evaluable: Function");
-        EMIT_TEXT("%s(", it[0].text);
+        found = true;
+
+        token *function_name_token = it;
+
+        flag_recognized_structure(&it, context, "Evaluable: Function Call");
         eat_tokens(&it, 2); /* <name>, "(" */
+
+        EMIT_TEXT("%s(", function_name_token->text);
+
         context->parse_depth++;
         while (it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
             if (!parse_evaluable_expression(&it, context)) {
-                flag_unrecognized_structure(&it, context, "Function Call");
+                flag_unrecognized_structure(&it, context, "Function Argument in Evaluable Function Call");
             }
 
             if (it[0].type == TOKEN_TYPE_COMMA) {
                 flag_recognized_structure(&it, context, "Evaluable: Function: Argument");
-                EMIT_TEXT(", ");
                 eat_token(&it); /* "," */
+
+                EMIT_TEXT(", ");
             }
         }
         context->parse_depth--;
+
         flag_recognized_structure(&it, context, "Evaluable: Function: End of Arguments");
-        EMIT_TEXT(")");
         eat_token(&it); /* ")" */
+
+        EMIT_TEXT(")");
     }
+
 
     /* Values */
+
+    /* Plain Number */
     if (it[0].type == TOKEN_TYPE_NUMBER) {
-        test_for_following_expression = true;
+        found = true;
+        token *value_token = it;
+
         flag_recognized_structure(&it, context, "Evaluable: Number");
-        EMIT_TEXT("%s", it[0].text);
         eat_token(&it);
+
+        EMIT_TEXT("%s", value_token->text);
+
+    /* Negative Number */
     } else if (it[0].type == TOKEN_TYPE_MINUS && it[1].type == TOKEN_TYPE_NUMBER) {
-        test_for_following_expression = true;
+        found = true;
+        token *value_token = &it[1];
+
         flag_recognized_structure(&it, context, "Evaluable: Negative Number");
-        EMIT_TEXT("-%s", it[1].text);
         eat_tokens(&it, 2);
+
+        EMIT_TEXT("-%s", value_token->text);
+
+    /* Variable */
     } else if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-        test_for_following_expression = true;
+        found = true;
+        token *value_token = it;
+
         flag_recognized_structure(&it, context, "Evaluable: Identifier");
-        EMIT_TEXT("%s", it[0].text);
         eat_token(&it);
+
+        EMIT_TEXT("%s", value_token->text);
+
         parse_subscripts_and_dereferences(&it, context);
+
+    /* String Literal */
     } else if (it[0].type == TOKEN_TYPE_STRING_LITERAL) {
-        test_for_following_expression = true;
+        found = true;
+        token *value_token = it;
+
         flag_recognized_structure(&it, context, "Evaluable: String Literal");
-        EMIT_TEXT("\"%s\"", it[0].text);
         eat_token(&it);
+
+        EMIT_TEXT("\"%s\"", value_token->text);
+
+    /* String Literal */
     } else if (it[0].type == TOKEN_TYPE_CHARACTER_LITERAL) {
-        test_for_following_expression = true;
+        found = true;
+        token *value_token = it;
+
         flag_recognized_structure(&it, context, "Evaluable: Character Literal");
-        EMIT_TEXT("#char \"%s\"", it[0].text);
         eat_token(&it);
+
+        EMIT_TEXT("#char \"%s\"", value_token->text);
     }
 
-    if (test_for_following_expression) {
-        if (is_unary_postfix_operator_token(it[0])) {
-            flag_recognized_structure(&it, context, "Evaluable: Unary Postfix Operator");
-            EMIT_TEXT("%s", it[0].text);
-            eat_token(&it); /* <operator> */
-        }
-        if (is_binary_operator_token(it[0])) {
-            flag_recognized_structure(&it, context, "Evaluable: Binary Operator");
-            EMIT_TEXT(" %s ", it[0].text);
-            eat_token(&it); /* <operator> */
-            parse_evaluable_expression(&it, context);
-        }
-        if (it[0].type == TOKEN_TYPE_TERNARY) {
+    if (!found) {
+        context->parse_depth--;
+        return false;
+    }
 
-            context->unsupported_count++;
-            issue_warning(warning_type_ternary);
 
+    /* Test for following evaluables */
+
+    /* Postfix Operators */
+    if (is_unary_postfix_operator_token(it[0])) {
+        token *operator_token = it;
+
+        flag_recognized_structure(&it, context, "Evaluable: Unary Postfix Operator");
+        eat_token(&it); /* <operator> */
+
+        EMIT_TEXT("%s", operator_token->text);
+    }
+
+    /* Binary Operators */
+    if (is_binary_operator_token(it[0])) {
+        token *operator_token = it;
+
+        flag_recognized_structure(&it, context, "Evaluable: Binary Operator");
+        eat_token(&it); /* <operator> */
+
+        EMIT_TEXT(" %s ", operator_token->text);
+
+        parse_evaluable_expression(&it, context);
+    }
+
+    /* Ternary Operator */
+    if (it[0].type == TOKEN_TYPE_TERNARY) {
+
+        context->unsupported_count++;
+        issue_warning(warning_type_ternary);
+
+        flag_recognized_structure(&it, context, "Evaluable: Ternary Operator");
+        eat_token(&it); /* '?' */
+
+        EMIT_TEXT(" ? ");
+
+        if (!parse_evaluable_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Evaluable Expression in Ternary (Position 2)");
+        }
+
+        if (it[0].type == TOKEN_TYPE_COLON) {
             flag_recognized_structure(&it, context, "Evaluable: Ternary Operator");
-            EMIT_TEXT(" %s ", it[0].text);
-            eat_token(&it); /* '?' */
-            parse_evaluable_expression(&it, context);
-            if (it[0].type == TOKEN_TYPE_COLON) {
-                flag_recognized_structure(&it, context, "Evaluable: Ternary Operator");
-                EMIT_TEXT(" %s ", it[0].text);
-                eat_token(&it); /* ':' */
-                parse_evaluable_expression(&it, context);
+            eat_token(&it); /* ':' */
 
+            EMIT_TEXT(" : ");
+
+            if (!parse_evaluable_expression(&it, context)) {
+                flag_unrecognized_structure(&it, context, "Evaluable Expression in Ternary (Position 3)");
             }
         }
-        *token_at = it;
-        context->parse_depth--;
-        return true;
     }
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_statement(token **token_at, parse_context *context) {
     token *it = *token_at;
     context->parse_depth++;
+
     token *statement_start = it;
 
     /* Variable Declaration */
     if (parse_variable_declaration(&it, context)) {
-        flag_recognized_structure(&it, context, "Statement: Variable Declaration");
         /* Note parse_vairable_declaration eats entire statement to ';'. */
-        *token_at = it;
+
         context->parse_depth--;
+        *token_at = it;
         return true;
     }
 
@@ -1204,22 +1311,32 @@ bool parse_statement(token **token_at, parse_context *context) {
             flag_recognized_structure(&it, context, "Statement: Return: Evaluable");
         }
 
-    /* Single-Line Statements */
-    } else if (it[0].type == TOKEN_TYPE_KEYWORD_CONTINUE || it[0].type == TOKEN_TYPE_KEYWORD_BREAK) {
-        flag_recognized_structure(&it, context, "Statement: Break or Continue");
-        EMIT_TEXT("%s", it[0].text);
-        eat_token(&it); /* <keyword> */
+    /* Break */
+    } else if (it[0].type == TOKEN_TYPE_KEYWORD_BREAK) {
+        flag_recognized_structure(&it, context, "Statement: Break");
+        eat_token(&it); /* "break" */
+
+        EMIT_TEXT("break");
+
+    /* Continue */
+    } else if (it[0].type == TOKEN_TYPE_KEYWORD_CONTINUE) {
+        flag_recognized_structure(&it, context, "Statement: Continue");
+        eat_token(&it); /* "continue" */
+
+        EMIT_TEXT("continue");
 
     /* Generic Evaluable */
-    } else if (parse_evaluable_expression(&it, context)) {
-        flag_recognized_structure(&it, context, "Statement: Evaluable");
+    } else {
+        parse_evaluable_expression(&it, context);
     }
 
-    /* Emply Statement */
+    /* End of Statement */
     if (it[0].type == TOKEN_TYPE_SEMICOLON) {
         flag_recognized_structure(&it, context, "Statement: Semi-Colon");
-        EMIT_TEXT(";");
         eat_token(&it); /* ";" */
+
+        EMIT_TEXT(";");
+
         *token_at = it;
         context->parse_depth--;
         return true;
@@ -1231,176 +1348,200 @@ bool parse_statement(token **token_at, parse_context *context) {
 
 bool parse_if(token **token_at, parse_context *context) {
     token *it = *token_at;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_IF) {
+        return false;
+    }
     context->parse_depth++;
-    token *statement_start = it;
 
-    if (it[0].type == TOKEN_TYPE_KEYWORD_IF && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        flag_recognized_structure(&it, context, "If Statement");
-        EMIT_TEXT("if (");
-        eat_tokens(&it, 2); /* "if", "(" */
+    flag_recognized_structure(&it, context, "If Statement");
+    eat_token(&it); /* "if" */
 
-        context->parse_depth++;
-        bool parsing = true;
-        while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
-            if (!parse_evaluable_expression(&it, context)) {
-                parsing = false;
-                flag_unrecognized_structure(&it, context, "If Statement: Condition");
-            }
+    if (it[0].type == TOKEN_TYPE_OPEN_PAREN) {
+        eat_token(&it);
+    }
+
+    EMIT_TEXT("if (");
+
+    bool parsing = true;
+    while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
+        if (!parse_evaluable_expression(&it, context)) {
+            parsing = false;
+            flag_unrecognized_structure(&it, context, "If Statement: Condition");
         }
-        context->parse_depth--;
-        flag_recognized_structure(&it, context, "If Statement: End of Condition");
-        EMIT_TEXT(") ");
-        eat_token(&it); /* ")" */
+    }
 
-        if (parse_scope(&it, context)) {
-            EMIT_TEXT(" ");
-        } else {
+    flag_recognized_structure(&it, context, "If Statement: End of Condition");
+    eat_token(&it); /* ")" */
+
+    EMIT_TEXT(") ");
+
+    if (parse_scope(&it, context)) {
+        EMIT_TEXT(" ");
+
+    } else {
+
+        context->indent_depth++;
+        if (!parse_statement(&it, context))
+            flag_unrecognized_structure(&it, context, "If Statement: Inline");
+        context->indent_depth--;
+    }
+
+    if (it[0].type == TOKEN_TYPE_KEYWORD_ELSE) {
+        flag_recognized_structure(&it, context, "Else Statement");
+        EMIT_TEXT("else ");
+        eat_token(&it);
+
+        if (it[0].type == TOKEN_TYPE_KEYWORD_IF) {
+            parse_if(&it, context);
+
+        } else if (!parse_scope(&it, context)) {
+
             context->indent_depth++;
             if (!parse_statement(&it, context))
-                flag_unrecognized_structure(&it, context, "If Statement: Inline");
+                flag_unrecognized_structure(&it, context, "Else Statement: Inline");
             context->indent_depth--;
         }
-
-        if (it[0].type == TOKEN_TYPE_KEYWORD_ELSE) {
-            flag_recognized_structure(&it, context, "Else Statement");
-            EMIT_TEXT("else ");
-            eat_token(&it);
-
-            if (it[0].type == TOKEN_TYPE_KEYWORD_IF) {
-                parse_if(&it, context);
-            } else if (!parse_scope(&it, context)) {
-                context->indent_depth++;
-                if (!parse_statement(&it, context))
-                    flag_unrecognized_structure(&it, context, "Else Statement: Inline");
-                context->indent_depth--;
-            }
-        }
-        *token_at = it;
-        context->parse_depth--;
-        return true;
     }
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_for(token **token_at, parse_context *context) {
     token *it = *token_at;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_FOR) {
+        return false;
+    }
     context->parse_depth++;
-    token *statement_start = it;
 
-    if (it[0].type == TOKEN_TYPE_KEYWORD_FOR && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        flag_recognized_structure(&it, context, "For Statement");
-        EMIT_TEXT("for (");
-        eat_tokens(&it, 2); /* "for", "(" */
+    flag_recognized_structure(&it, context, "For Statement");
+    eat_token(&it); /* "for" */
 
-        context->parse_depth++;
-        if (!parse_statement(&it, context)) {
-            flag_unrecognized_structure(&it, context, "For Statement: Initializer");
-        }
-        EMIT_TEXT(" ");
+    if (it[0].type == TOKEN_TYPE_OPEN_PAREN) {
+        eat_token(&it); /* "(" */
+    }
 
-        if (!parse_statement(&it, context)) {
-            flag_unrecognized_structure(&it, context, "For Statement: Conditional");
-        }
-        EMIT_TEXT(" ");
+    EMIT_TEXT("for (");
 
-        if (!parse_evaluable_expression(&it, context)) {
-            flag_unrecognized_structure(&it, context, "For Statement: Increment");
-        }
-        context->parse_depth--;
+    /* For Loop Control Statements */
+    context->parse_depth++;
+    if (!parse_statement(&it, context)) {
+        flag_unrecognized_structure(&it, context, "For Statement: Initializer");
+    }
+    EMIT_TEXT(" ");
 
-        if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
-            flag_recognized_structure(&it, context, "For Statement: End of Arguments");
-            eat_token(&it); /* ")" */
-            EMIT_TEXT(") ");
-        } else {
-            flag_unrecognized_structure(&it, context, "For Statement: End of Arguments");
-        }
+    if (!parse_statement(&it, context)) {
+        flag_unrecognized_structure(&it, context, "For Statement: Conditional");
+    }
+    EMIT_TEXT(" ");
 
-        if (parse_scope(&it, context)) {
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        } else {
-            flag_unrecognized_structure(&it, context, "For Statement: Scope");
-        }
+    if (!parse_evaluable_expression(&it, context)) {
+        flag_unrecognized_structure(&it, context, "For Statement: Increment");
     }
     context->parse_depth--;
-    return false;
+
+    if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
+        eat_token(&it); /* ")" */
+    }
+
+    EMIT_TEXT(") ");
+
+    /* For Loop Scope */
+    if (!parse_scope(&it, context)) {
+        flag_unrecognized_structure(&it, context, "For Statement: Scope");
+    }
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
 }
 
 bool parse_while(token **token_at, parse_context *context) {
     token *it = *token_at;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_WHILE) {
+        return false;
+    }
     context->parse_depth++;
-    token *statement_start = it;
 
-    if (it[0].type == TOKEN_TYPE_KEYWORD_WHILE && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        flag_recognized_structure(&it, context, "While Statement");
-        EMIT_TEXT("while (");
-        eat_tokens(&it, 2); /* "while", "(" */
+    flag_recognized_structure(&it, context, "While Statement");
+    eat_token(&it); /* "while" */
 
-        context->parse_depth++;
-        if (!parse_evaluable_expression(&it, context)) {
-            flag_unrecognized_structure(&it, context, "While Statement: Conditional");
-        }
-        context->parse_depth--;
+    EMIT_TEXT("while (");
 
-        if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
-            flag_recognized_structure(&it, context, "While Statement: End of Conditional");
-            eat_token(&it); /* ")" */
-            EMIT_TEXT(") ");
-        } else {
-            flag_unrecognized_structure(&it, context, "While Statement: End of Conditional");
-        }
+    /* While Loop Control Statement */
+    if (it[0].type == TOKEN_TYPE_OPEN_PAREN) {
+        eat_token(&it); /* "(" */
+    }
 
-        if (parse_scope(&it, context)) {
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        } else {
-            flag_unrecognized_structure(&it, context, "While Statement: Scope");
-        }
+    context->parse_depth++;
+    if (!parse_evaluable_expression(&it, context)) {
+        flag_unrecognized_structure(&it, context, "While Statement: Conditional");
     }
     context->parse_depth--;
-    return false;
+
+    if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
+        flag_recognized_structure(&it, context, "While Statement: End of Conditional");
+        eat_token(&it); /* ")" */
+    }
+
+    EMIT_TEXT(") ");
+
+    /* While Loop Scope */
+    if (!parse_scope(&it, context)) {
+        flag_unrecognized_structure(&it, context, "While Statement: Scope");
+    }
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
 }
 
 bool parse_do(token **token_at, parse_context *context) {
     token *it = *token_at;
-    token *statement_start = it;
 
     if (it[0].type != TOKEN_TYPE_KEYWORD_DO) {
         return false;
     }
+    context->parse_depth++;
 
     flag_recognized_structure(&it, context, "Do-While Statement");
-    EMIT_TEXT("do ");
     eat_token(&it); /* "do" */
 
-    context->parse_depth++;
+    EMIT_TEXT("do ");
+
     if (!parse_scope(&it, context)) {
         flag_unrecognized_structure(&it, context, "Do-While Statement: Scope");
     }
 
-    if (it[0].type == TOKEN_TYPE_KEYWORD_WHILE && it[1].type == TOKEN_TYPE_OPEN_PAREN) {
-        EMIT_TEXT(" while (");
-        eat_tokens(&it, 2); /* "while", "(" */
-
-        if (!parse_evaluable_expression(&it, context)) {
-            flag_unrecognized_structure(&it, context, "Do-While Statement: Conditional");
-        }
-
-        if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
-            flag_recognized_structure(&it, context, "While Statement: End of Conditional");
-            eat_token(&it); /* ")" */
-            EMIT_TEXT(");");
-        } else {
-            flag_unrecognized_structure(&it, context, "While Statement: End of Conditional");
-        }
-        if (it[0].type==TOKEN_TYPE_SEMICOLON) {
-            eat_token(&it); /* ";" */
-        }
+    if (it[0].type == TOKEN_TYPE_KEYWORD_WHILE) {
+        eat_token(&it); /* "while" */
     }
+
+    if (it[1].type == TOKEN_TYPE_OPEN_PAREN) {
+        eat_token(&it); /* "(" */
+    }
+
+    EMIT_TEXT(" while (");
+
+    if (!parse_evaluable_expression(&it, context)) {
+        flag_unrecognized_structure(&it, context, "Do-While Statement: Conditional");
+    }
+
+    if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
+        flag_recognized_structure(&it, context, "Do-While Statement: End of Conditional");
+        eat_token(&it); /* ")" */
+    }
+
+    if (it[0].type==TOKEN_TYPE_SEMICOLON) {
+        eat_token(&it); /* ";" */
+    }
+
+    EMIT_TEXT(");");
+
     context->parse_depth--;
     *token_at = it;
     return true;
@@ -1408,25 +1549,30 @@ bool parse_do(token **token_at, parse_context *context) {
 
 bool parse_goto(token **token_at, parse_context *context) {
     token *it = *token_at;
-    token *statement_start = it;
 
     if (it[0].type != TOKEN_TYPE_KEYWORD_GOTO) {
         return false;
     }
+    context->parse_depth++;
 
     context->unsupported_count++;
     issue_warning(warning_type_goto);
 
-
     flag_recognized_structure(&it, context, "Goto Statement");
-    EMIT_TEXT("goto ");
     eat_token(&it);
+
+    char *label_name;
     if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-        EMIT_TEXT("%s;", it[0].text);
+        label_name = it->text;
         eat_token(&it);
+    } else {
+        label_name = "/* Un-Named */";
     }
+
     if (it[0].type == TOKEN_TYPE_SEMICOLON)
         eat_token(&it); /* ";" */
+
+    EMIT_TEXT("goto %s;", label_name);
 
     context->parse_depth--;
     *token_at = it;
@@ -1435,18 +1581,21 @@ bool parse_goto(token **token_at, parse_context *context) {
 
 bool parse_goto_label(token **token_at, parse_context *context) {
     token *it = *token_at;
-    token *statement_start = it;
 
     if (!(it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_COLON)) {
         return false;
     }
+    context->parse_depth++;
 
     context->unsupported_count++;
     issue_warning(warning_type_goto);
 
+    token *label_token = it;
+
     flag_recognized_structure(&it, context, "Goto Label");
-    EMIT_TEXT("%s:", it[0].text);
-    eat_tokens(&it, 2);
+    eat_tokens(&it, 2); /* <label>, ":" */
+
+    EMIT_TEXT("%s:", label_token->text);
 
     context->parse_depth--;
     *token_at = it;
@@ -1455,36 +1604,39 @@ bool parse_goto_label(token **token_at, parse_context *context) {
 
 bool parse_switch(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    token *statement_start = it;
 
-    if (!(it[0].type == TOKEN_TYPE_KEYWORD_SWITCH && it[1].type == TOKEN_TYPE_OPEN_PAREN)) {
-        context->parse_depth--;
+    if (it[0].type != TOKEN_TYPE_KEYWORD_SWITCH) {
         return false;
     }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Switch Statement");
+    eat_token(&it); /* "switch" */
+
+    if (it[0].type == TOKEN_TYPE_OPEN_PAREN)
+        eat_token(&it); /* "(" */
 
     context->unsupported_count++;
     issue_warning(warning_type_switch);
 
-    flag_recognized_structure(&it, context, "Switch Statement");
     EMIT_TEXT("switch (");
-    eat_tokens(&it, 2); /* "if", "(" */
 
-    context->parse_depth++;
     bool parsing = true;
     while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
         if (!parse_evaluable_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Switch Statement: Test Expression");
             parsing = false;
-            flag_unrecognized_structure(&it, context, "Switch Statement: Test Value");
         }
     }
-    context->parse_depth--;
+
     flag_recognized_structure(&it, context, "Switch Statement: End of Test Value");
-    EMIT_TEXT(") ");
     eat_token(&it); /* ")" */
+
+    EMIT_TEXT(") ");
 
     context->extra_indent = true;
     if (!parse_scope(&it, context)) {
+        context->extra_indent = false;
         flag_unrecognized_structure(&it, context, "Switch Statement: Scope");
     }
 
@@ -1495,15 +1647,14 @@ bool parse_switch(token **token_at, parse_context *context) {
 
 bool parse_case(token **token_at, parse_context *context) {
     token *it = *token_at;
-    token *statement_start = it;
 
     if (it[0].type != TOKEN_TYPE_KEYWORD_CASE) {
         return false;
     }
+    context->parse_depth++;
 
     context->unsupported_count++;
     issue_warning(warning_type_switch);
-
 
     flag_recognized_structure(&it, context, "Case Statement");
     eat_token(&it);
@@ -1511,14 +1662,16 @@ bool parse_case(token **token_at, parse_context *context) {
     context->indent_depth--;
     EMIT_TEXT_INDENT("case ");
 
-    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-        EMIT_TEXT("%s:", it[0].text);
-        eat_token(&it);
+    /* Technically this should only be an integer or an identifier, but this will catch both cases in a single expression */
+    if (!parse_evaluable_expression(&it, context)) {
+        flag_unrecognized_structure(&it, context, "Case Statement: Label or Number");
     }
-    context->indent_depth++;
 
     if (it[0].type == TOKEN_TYPE_COLON)
         eat_token(&it);
+
+    EMIT_TEXT(":");
+    context->indent_depth++;
 
     context->parse_depth--;
     *token_at = it;
@@ -1527,15 +1680,14 @@ bool parse_case(token **token_at, parse_context *context) {
 
 bool parse_default(token **token_at, parse_context *context) {
     token *it = *token_at;
-    token *statement_start = it;
 
     if (it[0].type != TOKEN_TYPE_KEYWORD_DEFAULT) {
         return false;
     }
+    context->parse_depth++;
 
     context->unsupported_count++;
     issue_warning(warning_type_switch);
-
 
     flag_recognized_structure(&it, context, "Default Statement");
     eat_token(&it);
@@ -1554,7 +1706,6 @@ bool parse_default(token **token_at, parse_context *context) {
 
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
 
     BEGIN_HYPOTHETICAL_PARSE_BLOCK();
     bool is_static = false;
@@ -1563,177 +1714,192 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
         is_static = true;
         eat_token(&it);
     }
+
     token *declaration_start = it;
-    if (parse_type_expression(&it, context)) {
-        END_HYPOTHETICAL_PARSE_BLOCK();
 
-        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-            flag_recognized_structure(&it, context, "Variable Declaration");
-            char *variable_name = it[0].text;
-            if (is_static) {
-                context->unsupported_count++;
-                issue_warning(warning_type_static_variable);
-                EMIT_TEXT("/* static */ ");
-            }
-            EMIT_TEXT("%s : ", variable_name);
-
-            it = declaration_start;
-            parse_type_expression(&it, context);
-            eat_token(&it); /* <name> */
-
-            parse_array_subscript(&it, context);
-
-            if (it[0].type == TOKEN_TYPE_SEMICOLON) {
-                EMIT_TEXT(";");
-                eat_token(&it); /* ";" */
-                *token_at = it;
-                context->parse_depth--;
-                return true;
-            } else if (it[0].type == TOKEN_TYPE_COMMA) {
-                while (it[0].type != TOKEN_TYPE_SEMICOLON) {
-                    EMIT_TEXT(";");
-                    eat_token(&it);
-                    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-                        flag_recognized_structure(&it, context, "Variable Declaration");
-                        EMIT_TEXT("\n");
-                        variable_name = it[0].text;
-                        EMIT_TEXT_INDENT("%s : ", variable_name);
-                        eat_token(&it);
-                        token *next = it;
-                        it = declaration_start;
-                        parse_type_expression(&it, context);
-                        it = next;
-                        parse_array_subscript(&it, context);
-                    }
-                }
-                eat_token(&it);
-                EMIT_TEXT(";");
-                *token_at = it;
-                context->parse_depth--;
-                return true;
-            } else if (is_assignment_operator_token(it[0])) {
-                EMIT_TEXT(" %s ", it[0].text);
-                eat_token(&it); /* "=" */
-                if (parse_evaluable_expression(&it, context)) {
-                    flag_recognized_structure(&it, context, "Assignment expression after declaration");
-                    if (it[0].type == TOKEN_TYPE_SEMICOLON) {
-                        flag_recognized_structure(&it, context, "Closing ';' after assignment expression in declaration");
-                        EMIT_TEXT(";");
-                        eat_token(&it); /* ";" */
-                    } else {
-                        flag_unrecognized_structure(&it, context, "Closing ';' after assignment expression in declaration");
-                    }
-                    *token_at = it;
-                    context->parse_depth--;
-                    return true;
-                }
-                flag_unrecognized_structure(&it, context, "Assignment expression after declaration");
-                context->parse_depth--;
-                return false;
-            }
-            flag_unrecognized_structure(&it, context, "\';\' or assignment");
-        }
+    bool continue_parsing = true;
+    if (!parse_type_expression(&it, context)) {
+        continue_parsing = false;
+    }
+    if (it[0].type != TOKEN_TYPE_IDENTIFIER) {
+        continue_parsing = false;
     }
     END_HYPOTHETICAL_PARSE_BLOCK();
 
+    if (!continue_parsing) {
+        return false;
+    }
+    context->parse_depth++;
+
+    char *variable_name = it[0].text;
+
+    flag_recognized_structure(&it, context, "Variable Declaration");
+
+    if (is_static) {
+        context->unsupported_count++;
+        issue_warning(warning_type_static_variable);
+
+        EMIT_TEXT("/* static */ ");
+    }
+    EMIT_TEXT("%s : ", variable_name);
+
+    it = declaration_start;
+
+    parse_type_expression(&it, context);
+    eat_token(&it); /* <name> */
+
+    parse_array_subscript(&it, context);
+
+    /* Single Plain Declaration */
+    if (it[0].type == TOKEN_TYPE_SEMICOLON) {
+        eat_token(&it); /* ";" */
+
+    /* Chained Plain Declaration */
+    } else if (it[0].type == TOKEN_TYPE_COMMA) {
+        while (it[0].type != TOKEN_TYPE_SEMICOLON) {
+            eat_token(&it); /* "," */
+
+            if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+                variable_name = it[0].text;
+
+                EMIT_TEXT("\n");
+                EMIT_TEXT_INDENT("%s : ", variable_name);
+
+                flag_recognized_structure(&it, context, "Variable Declaration");
+                eat_token(&it);
+
+                token *next = it;
+                it = declaration_start;
+                parse_type_expression(&it, context);
+                it = next;
+
+                parse_array_subscript(&it, context);
+            }
+        }
+        eat_token(&it); /* ";" */
+
+    /* Declaration and Assignment */
+    } else if (is_assignment_operator_token(it[0])) {
+        EMIT_TEXT(" %s ", it[0].text);
+
+        flag_recognized_structure(&it, context, "Assignment expression after declaration");
+        eat_token(&it); /* "=", etc */
+
+        if (!parse_evaluable_expression(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Assignment expression after declaration");
+        }
+
+        if (it[0].type == TOKEN_TYPE_SEMICOLON) {
+            flag_recognized_structure(&it, context, "Closing ';' after assignment expression in declaration");
+            eat_token(&it); /* ";" */
+        }
+
+    }
+
+    EMIT_TEXT(";");
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_scope(token **token_at, parse_context *context) {
     token *it = *token_at;
-    if (it[0].type == TOKEN_TYPE_OPEN_CURLY_BRACE) {
-        flag_recognized_structure(&it, context, "Scope: Start");
-        EMIT_TEXT("{");
-        eat_token(&it); /* "{" */
 
-        int original_indent = context->indent_depth;
+    if (it[0].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
+        return false;
+    }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Scope: Start");
+    eat_token(&it); /* "{" */
+
+    EMIT_TEXT("{");
+
+    int original_indent = context->indent_depth;
+
+    context->indent_depth++;
+
+    if (context->extra_indent) {
         context->indent_depth++;
-        if (context->extra_indent) {
-            context->indent_depth++;
-            context->extra_indent = false;
-        }
-        context->parse_depth++;
+        context->extra_indent = false;
+    }
 
-        while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+    while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
 
-            if (parse_line_comment(&it, context))
-                continue;
+        if (parse_line_comment(&it, context))
+            continue;
 
-            if (parse_block_comment(&it, context))
-                continue;
-
-            EMIT_TEXT("\n");
-
-            if (parse_blank_line(&it, context))
-                continue;
-
-            if (parse_general_preprocessor(&it, context))
-                continue;
-
-            if (parse_enum_def(&it, context))
-                continue;
-
-            if (parse_struct_def(&it, context))
-                continue;
-
-            if (parse_typedef(&it, context))
-                continue;
-
-            if (parse_default(&it, context))
-                continue;
-
-            if (parse_case(&it, context))
-                continue;
-
-            if (parse_goto_label(&it, context))
-                continue;
-
-            EMIT_TEXT_INDENT("");
-
-            if (parse_if(&it, context))
-                continue;
-
-            if (parse_for(&it, context))
-                continue;
-
-            if (parse_do(&it, context))
-                continue;
-
-            if (parse_while(&it, context))
-                continue;
-
-            if (parse_switch(&it, context))
-                continue;
-
-            if (parse_goto(&it, context))
-                continue;
-
-            if (parse_statement(&it, context))
-                continue;
-
-            flag_unrecognized_structure(&it, context, "Statement In Scope");
-        }
-        flag_recognized_structure(&it, context, "Scope: End");
-        eat_token(&it); /* "}" */
-
-        context->indent_depth = original_indent;
-        context->parse_depth--;
+        if (parse_block_comment(&it, context))
+            continue;
 
         EMIT_TEXT("\n");
-        EMIT_TEXT_INDENT("}");
 
-        *token_at = it;
-        context->parse_depth--;
-        return true;
+        if (parse_blank_line(&it, context))
+            continue;
+
+        if (parse_general_preprocessor(&it, context))
+            continue;
+
+        if (parse_enum_def(&it, context))
+            continue;
+
+        if (parse_struct_def(&it, context))
+            continue;
+
+        if (parse_typedef(&it, context))
+            continue;
+
+        if (parse_default(&it, context))
+            continue;
+
+        if (parse_case(&it, context))
+            continue;
+
+        if (parse_goto_label(&it, context))
+            continue;
+
+        EMIT_TEXT_INDENT("");
+
+        if (parse_if(&it, context))
+            continue;
+
+        if (parse_for(&it, context))
+            continue;
+
+        if (parse_do(&it, context))
+            continue;
+
+        if (parse_while(&it, context))
+            continue;
+
+        if (parse_switch(&it, context))
+            continue;
+
+        if (parse_goto(&it, context))
+            continue;
+
+        if (parse_statement(&it, context))
+            continue;
+
+        flag_unrecognized_structure(&it, context, "Statement In Scope");
     }
+
+    flag_recognized_structure(&it, context, "Scope: End");
+    eat_token(&it); /* "}" */
+
+    context->indent_depth = original_indent;
+
+    EMIT_TEXT("\n");
+    EMIT_TEXT_INDENT("}");
+
     context->parse_depth--;
-    return false;
+    *token_at = it;
+    return true;
 }
 
 bool parse_function_definition(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
 
     BEGIN_HYPOTHETICAL_PARSE_BLOCK();
     bool is_static = false;
@@ -1742,270 +1908,332 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         is_static = true;
         eat_token(&it);
     }
+
     token *function_start = it;
-    if (parse_type_expression(&it, context)) {
-        END_HYPOTHETICAL_PARSE_BLOCK();
 
-        token function_name_token = it[0];
-        flag_recognized_structure(&it, context, "Function: Name");
-        eat_token(&it);
-        flag_recognized_structure(&it, context, "Function: Start of Arguments");
-        eat_token(&it); /* "(" */
-
-        if (is_static) {
-            context->unsupported_count++;
-            issue_warning(warning_type_static_function);
-            EMIT_TEXT("/* static */ %s :: (", function_name_token.text);
-        } else {
-            EMIT_TEXT("%s :: (", function_name_token.text);
-        }
-
-        /* Parse Argument List */
-
-        context->parse_depth++;
-        while (it && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
-            bool arguemnt_is_pointer = false;
-            token argument_type_token;
-            token argument_name_token;
-
-            if (parse_block_comment(&it, context))
-                continue;
-
-            if (it[0].type == TOKEN_TYPE_KEYWORD_CONST) {
-                flag_recognized_structure(&it, context, "Function: Arguemnts: Const");
-                eat_token(&it);
-                /* Quietly eat all const tokens */
-            }
-
-            token *argument_start = it;
-
-            BEGIN_HYPOTHETICAL_PARSE_BLOCK();
-            if (parse_type_expression(&it, context)) {
-                END_HYPOTHETICAL_PARSE_BLOCK();
-
-                bool has_name = false;
-                if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-                    flag_recognized_structure(&it, context, "Function: Arguemnts: Name");
-                    has_name = true;
-                    EMIT_TEXT("%s: ", it[0].text);
-                } else {
-                    flag_recognized_structure(&it, context, "Function: Arguemnts: Un-Named Argument");
-                    EMIT_TEXT("/* Un-Named : */ ");
-                }
-                it = argument_start;
-                parse_type_expression(&it, context);
-                if (has_name)
-                    eat_token(&it); /* <name> */
-            } else {
-                END_HYPOTHETICAL_PARSE_BLOCK();
-
-                flag_unrecognized_structure(&it, context, "Function Argument");
-            }
-
-            if (it[0].type == TOKEN_TYPE_OPEN_SQUARE_BRACE && it[1].type == TOKEN_TYPE_CLOSE_SQUARE_BRACE) {
-                EMIT_TEXT("[..]");
-                eat_tokens(&it, 2);
-            }
-
-            if (it[0].type == TOKEN_TYPE_COMMA) {
-                EMIT_TEXT(", ");
-                eat_token(&it);
-            }
-
-        }
-        context->parse_depth--;
-        flag_recognized_structure(&it, context, "Function: Arguments: End");
-        eat_token(&it); /* ")" */
-
-        it = function_start;
-        if (it[0].type == TOKEN_TYPE_KEYWORD_VOID && it[1].type == TOKEN_TYPE_STAR) {
-            EMIT_TEXT(") ");
-        } else {
-            EMIT_TEXT(") -> ");
-            parse_type_expression(&it, context);
-        }
-
-        while (it[0].type != TOKEN_TYPE_SEMICOLON && it[0].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
-            eat_token(&it);
-        }
-
-        if (it[0].type == TOKEN_TYPE_SEMICOLON) {
-            flag_recognized_structure(&it, context, "Function Prototype");
-            EMIT_TEXT(";");
-            eat_token(&it);
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        } else {
-            EMIT_TEXT(" ");
-        }
-        if (parse_scope(&it, context)) {
-            *token_at = it;
-            context->parse_depth--;
-            return true;
-        } else {
-            flag_unrecognized_structure(&it, context, "Function Body");
-        }
+    bool parsing = true;
+    if (!parse_type_expression(&it, context)) {
+        parsing = false;
+    }
+    if (it[0].type != TOKEN_TYPE_IDENTIFIER) {
+        parsing = false;
     }
     END_HYPOTHETICAL_PARSE_BLOCK();
 
+    if (!parsing) {
+        return false;
+    }
+    context->parse_depth++;
+
+    token function_name_token = it[0];
+
+    flag_recognized_structure(&it, context, "Function: Name");
+    eat_token(&it);
+
+    if (it[0].type == TOKEN_TYPE_OPEN_PAREN) {
+        flag_recognized_structure(&it, context, "Function: Start of Arguments");
+        eat_token(&it); /* "(" */
+    }
+
+    if (is_static) {
+        context->unsupported_count++;
+        issue_warning(warning_type_static_function);
+
+        EMIT_TEXT("/* static */ ");
+    }
+
+    EMIT_TEXT("%s :: (", function_name_token.text);
+
+    /* Parse Argument List */
+    context->parse_depth++;
+
+    while (it && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
+
+        if (parse_block_comment(&it, context))
+            continue;
+
+        if (it[0].type == TOKEN_TYPE_KEYWORD_CONST) {
+            flag_recognized_structure(&it, context, "Function: Arguemnts: Const");
+            eat_token(&it);
+            /* Quietly eat all "const" tokens */
+        }
+
+        bool found_type_exp = true;
+        token *argument_start = it;
+
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        if (!parse_type_expression(&it, context)) {
+            found_type_exp = false;
+            flag_unrecognized_structure(&it, context, "Function Argument");
+        }
+        END_HYPOTHETICAL_PARSE_BLOCK();
+
+        bool has_name = false;
+        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+            flag_recognized_structure(&it, context, "Function: Arguemnts: Name");
+            has_name = true;
+            EMIT_TEXT("%s: ", it[0].text);
+        } else {
+            flag_recognized_structure(&it, context, "Function: Arguemnts: Un-Named Argument");
+            EMIT_TEXT("/* Un-Named : */ ");
+        }
+
+        it = argument_start;
+
+        if (found_type_exp)
+            parse_type_expression(&it, context);
+
+        if (has_name)
+            eat_token(&it); /* <name> */
+
+
+        if (it[0].type == TOKEN_TYPE_OPEN_SQUARE_BRACE && it[1].type == TOKEN_TYPE_CLOSE_SQUARE_BRACE) {
+            eat_tokens(&it, 2); /* "[", "]" */
+            EMIT_TEXT("[..]");
+        }
+
+        if (it[0].type == TOKEN_TYPE_COMMA) {
+            eat_token(&it); /* "," */
+            EMIT_TEXT(", ");
+        }
+
+    }
     context->parse_depth--;
-    return false;
+
+    flag_recognized_structure(&it, context, "Function: Arguments: End");
+    eat_token(&it); /* ")" */
+
+    token *end_of_arguments = it;
+
+    /* Parse Return Type */
+    it = function_start;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_VOID && it[1].type != TOKEN_TYPE_STAR) {
+        EMIT_TEXT(")");
+    } else {
+        EMIT_TEXT(") -> ");
+        parse_type_expression(&it, context);
+    }
+
+    it = end_of_arguments;
+
+    if (it[0].type == TOKEN_TYPE_SEMICOLON) {
+        flag_recognized_structure(&it, context, "Function Prototype");
+        eat_token(&it);
+
+        EMIT_TEXT(";");
+    } else {
+        EMIT_TEXT(" "); /* Space between return type and function body opening brace. */
+
+        /* Parse Function Body */
+        if (!parse_scope(&it, context)) {
+            flag_unrecognized_structure(&it, context, "Function Body");
+        }
+    }
+
+    context->parse_depth--;
+    *token_at = it;
+    return true;
 }
 
 bool parse_enum_def(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type != TOKEN_TYPE_KEYWORD_ENUM) {
-        context->parse_depth--;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_ENUM || it[1].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
         return false;
     }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Enum Definition");
     eat_token(&it); /* "enum" */
+
     if (it[0].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
-        flag_recognized_structure(&it, context, "Enum Definition");
         eat_token(&it); /* "{" */
+    }
 
-        token *enum_contents_start = it;
+    token *enum_contents_start = it;
 
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
-        while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+        eat_token(&it);
+    }
+    eat_token(&it); /* "}" */
+    END_HYPOTHETICAL_PARSE_BLOCK();
+
+    context->parse_depth++;
+    char *enum_name;
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        enum_name = it->text;
+
+        flag_recognized_structure(&it, context, "Enum: Name");
+        eat_token(&it);
+    } else {
+        enum_name = "/* Un-Named */";
+    }
+
+    EMIT_TEXT_INDENT("%s :: enum {", enum_name);
+    context->indent_depth++;
+
+    it = enum_contents_start;
+    while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+
+        if (parse_line_comment(&it, context))
+            continue;
+
+        if (parse_block_comment(&it, context))
+            continue;
+
+        EMIT_TEXT("\n");
+
+        if (parse_blank_line(&it, context))
+            continue;
+
+        if (parse_general_preprocessor(&it, context))
+            continue;
+
+        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+            flag_recognized_structure(&it, context, "Enum: Contents: Identifier");
+            EMIT_TEXT_INDENT("%s", it->text);
+            eat_token(&it);
+        } else {
+            flag_unrecognized_structure(&it, context, "Enum: Contents");
+            continue;
+        }
+
+        if (it[0].type == TOKEN_TYPE_NUMBER) {
+            EMIT_TEXT(" %s", it->text);
             eat_token(&it);
         }
-        eat_token(&it); /* "}" */
-        END_HYPOTHETICAL_PARSE_BLOCK();
-
-        context->parse_depth++;
-        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-            flag_recognized_structure(&it, context, "Enum: Name");
-            char *enum_name = it->text;
-
-            EMIT_TEXT_INDENT("%s :: enum {", enum_name);
-            context->indent_depth++;
-
-            it = enum_contents_start;
-            while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-
-                if (parse_line_comment(&it, context))
-                    continue;
-
-                if (parse_block_comment(&it, context))
-                    continue;
-
-                EMIT_TEXT("\n");
-
-                if (parse_blank_line(&it, context))
-                    continue;
-
-                if (parse_general_preprocessor(&it, context))
-                    continue;
-
-                if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-                    flag_recognized_structure(&it, context, "Enum: Contents: Identifier");
-                    EMIT_TEXT_INDENT("%s", it->text);
-                    eat_token(&it);
-                } else {
-                    flag_unrecognized_structure(&it, context, "Enum: Contents");
-                    continue;
-                }
-
-                if (it[0].type == TOKEN_TYPE_NUMBER) {
-                    EMIT_TEXT(" %s", it->text);
-                    eat_token(&it);
-                }
-                if (it[0].type == TOKEN_TYPE_COMMA) {
-                    EMIT_TEXT(",");
-                    eat_token(&it);
-                }
-            }
-            context->parse_depth--;
-            flag_recognized_structure(&it, context, "Enum: Contents: End");
-            eat_tokens(&it, 3); /* "}", <name>, ";" */
-            context->indent_depth--;
-
-            EMIT_TEXT("\n");
-            EMIT_TEXT_INDENT("};");
+        if (it[0].type == TOKEN_TYPE_COMMA) {
+            EMIT_TEXT(",");
+            eat_token(&it);
         }
     }
-    *token_at = it;
     context->parse_depth--;
+
+    if (it[0].type == TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+        flag_recognized_structure(&it, context, "Enum: Contents: End");
+        eat_token(&it); /* "}" */
+    }
+
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        flag_recognized_structure(&it, context, "Enum: Contents: End");
+        eat_token(&it); /* <name> */
+    }
+
+    if (it[0].type == TOKEN_TYPE_SEMICOLON) {
+        flag_recognized_structure(&it, context, "Enum: Contents: End");
+        eat_token(&it); /* ";" */
+    }
+
+    context->indent_depth--;
+
+    EMIT_TEXT("\n");
+    EMIT_TEXT_INDENT("};");
+
+    context->parse_depth--;
+    *token_at = it;
     return true;
 }
 
 bool parse_struct_def(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
-    if (it[0].type != TOKEN_TYPE_KEYWORD_STRUCT) {
-        context->parse_depth--;
+
+    if (it[0].type != TOKEN_TYPE_KEYWORD_STRUCT || it[1].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
         return false;
     }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Struct Definition");
     eat_token(&it); /* "struct" */
+
     if (it[0].type == TOKEN_TYPE_OPEN_CURLY_BRACE ) {
-        flag_recognized_structure(&it, context, "Struct Definition");
         eat_token(&it); /* "{" */
-
-        token *struct_contents_start = it;
-
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
-        while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-            eat_token(&it);
-        }
-        eat_token(&it); /* "}" */
-        END_HYPOTHETICAL_PARSE_BLOCK();
-
-        context->parse_depth++;
-        if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
-            flag_recognized_structure(&it, context, "Struct: Name");
-            char *struct_name = it->text;
-
-            EMIT_TEXT_INDENT("%s :: struct {", struct_name);
-            context->indent_depth++;
-
-            it = struct_contents_start;
-            while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
-
-                if (parse_line_comment(&it, context))
-                    continue;
-
-                if (parse_block_comment(&it, context))
-                    continue;
-
-                EMIT_TEXT("\n");
-
-                if (parse_blank_line(&it, context))
-                    continue;
-
-                if (parse_general_preprocessor(&it, context))
-                    continue;
-
-                EMIT_TEXT_INDENT("");
-
-                if (parse_variable_declaration(&it, context))
-                    continue;
-
-                flag_unrecognized_structure(&it, context, "Struct : Contents");
-            }
-            context->parse_depth--;
-            flag_recognized_structure(&it, context, "Struct: End of Contents");
-            eat_tokens(&it, 3); /* "}", <name>, ";" */
-            context->indent_depth--;
-
-            EMIT_TEXT("\n");
-            EMIT_TEXT_INDENT("};");
-        }
     }
 
-    *token_at = it;
+    token *struct_contents_start = it;
+
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+        eat_token(&it);
+    }
+    eat_token(&it); /* "}" */
+    END_HYPOTHETICAL_PARSE_BLOCK();
+
+    context->parse_depth++;
+    char *struct_name;
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        struct_name = it->text;
+
+        flag_recognized_structure(&it, context, "Struct: Name");
+        eat_token(&it); /* <name> */
+    } else {
+        struct_name = "/* Un-Named */";
+    }
+
+    EMIT_TEXT_INDENT("%s :: struct {", struct_name);
+    context->indent_depth++;
+
+    it = struct_contents_start;
+    while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+
+        if (parse_line_comment(&it, context))
+            continue;
+
+        if (parse_block_comment(&it, context))
+            continue;
+
+        EMIT_TEXT("\n");
+
+        if (parse_blank_line(&it, context))
+            continue;
+
+        if (parse_general_preprocessor(&it, context))
+            continue;
+
+        EMIT_TEXT_INDENT("");
+
+        if (parse_variable_declaration(&it, context))
+            continue;
+
+        flag_unrecognized_structure(&it, context, "Struct : Contents");
+    }
     context->parse_depth--;
+
+    if (it[0].type == TOKEN_TYPE_CLOSE_CURLY_BRACE) {
+        flag_recognized_structure(&it, context, "Struct: End of Contents");
+        eat_token(&it); /* "}" */
+    }
+
+    if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
+        flag_recognized_structure(&it, context, "Struct: End of Contents");
+        eat_token(&it); /* <name> */
+    }
+
+    if (it[0].type == TOKEN_TYPE_SEMICOLON) {
+        flag_recognized_structure(&it, context, "Struct: End of Contents");
+        eat_token(&it); /* ";" */
+    }
+
+    context->indent_depth--;
+
+    EMIT_TEXT("\n");
+    EMIT_TEXT_INDENT("};");
+
+    context->parse_depth--;
+    *token_at = it;
     return true;
 }
 
 bool parse_typedef(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+
     if (it[0].type != TOKEN_TYPE_KEYWORD_TYPEDEF) {
         context->parse_depth--;
         return false;
     }
+    context->parse_depth++;
+
+    flag_recognized_structure(&it, context, "Typedef");
     eat_token(&it); /* "typedef" */
 
     if (parse_enum_def(&it, context)) {
@@ -2018,7 +2246,7 @@ bool parse_typedef(token **token_at, parse_context *context) {
         END_HYPOTHETICAL_PARSE_BLOCK();
 
         if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_SEMICOLON) {
-            flag_recognized_structure(&it, context, "Typedef: General");
+            flag_recognized_structure(&it, context, "Typedef: Generic");
             token *type_name_token = &it[0];
 
             EMIT_TEXT("%s :: ", type_name_token->text);
@@ -2031,11 +2259,10 @@ bool parse_typedef(token **token_at, parse_context *context) {
         }
     }
 
-    *token_at = it;
     context->parse_depth--;
+    *token_at = it;
     return true;
 }
-
 
 
 int main (int argc, char *argv[]) {
