@@ -1312,16 +1312,16 @@ bool parse_statement(token **token_at, parse_context *context) {
     }
 
     /* Assignment */
-    bool parse_asignment = false;
+    bool parse_assignment = false;
     while (it[0].type != TOKEN_TYPE_SEMICOLON) {
         if (is_assignment_operator_token(it[1])) {
-            parse_asignment = true;
+            parse_assignment = true;
             break;
         }
         eat_token(&it);
     }
     it = statement_start;
-    if (parse_asignment) {
+    if (parse_assignment) {
         flag_recognized_structure(&it, context, "Statement: Assignment");
         EMIT_TEXT("%s", it[0].text);
         eat_token(&it); /* <name> */
