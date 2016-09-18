@@ -1323,6 +1323,11 @@ bool parse_statement(token **token_at, parse_context *context) {
     it = statement_start;
     if (parse_assignment) {
         flag_recognized_structure(&it, context, "Statement: Assignment");
+        if (it[0].type == TOKEN_TYPE_STAR) {
+            flag_recognized_structure(&it, context, "Statement: Assignment to dereferenced pointer");
+            eat_token(&it);
+            EMIT_TEXT("*");
+        }
         EMIT_TEXT("%s", it[0].text);
         eat_token(&it); /* <name> */
         parse_subscripts_and_dereferences(&it, context);
