@@ -1048,34 +1048,33 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         found = true;
         flag_recognized_structure(&it, context, "Parentheical");
         eat_token(&it);
-        token *parenthetical_start = it;
-        bool cast = false;
+
+        token *contents_start = it;
+
+        bool cast;
 
         BEGIN_HYPOTHETICAL_PARSE_BLOCK();
         BEGIN_TYPE_AS_ARGUMENT_BLOCK();
-        if (parse_type_expression(&it, context)) {
-            if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
-                eat_token(&it);
-                context->parse_type_as_argument = false;
-                if (parse_evaluable_expression(&it, context)) { /* Check for object of cast */
-                    END_HYPOTHETICAL_PARSE_BLOCK();
-
-                    cast = true;
-
-                    it = parenthetical_start;
-                    flag_recognized_structure(&it, context, "Caste");
-                    EMIT_TEXT("cast(");
-                    context->parse_type_as_argument = true;
-                    parse_type_expression(&it, context);
-                }
-            }
-        }
+        cast = parse_type_expression(&it, context);
         END_TYPE_AS_ARGUMENT_BLOCK();
+
+        if (cast && it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
+            eat_token(&it);
+            cast = parse_evaluable_expression(&it, context); /* Check for object of cast */
+        }
         END_HYPOTHETICAL_PARSE_BLOCK();
 
-        if (!cast) {
+        it = contents_start;
+
+        if (cast) {
+            flag_recognized_structure(&it, context, "Cast");
+            EMIT_TEXT("cast(");
+            BEGIN_TYPE_AS_ARGUMENT_BLOCK();
+            parse_type_expression(&it, context);
+            END_TYPE_AS_ARGUMENT_BLOCK();
+            parse_evaluable_expression(&it, context);
+        } else {
             EMIT_TEXT("(");
-            it = parenthetical_start;
             bool parsing = true;
             while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
 
@@ -1095,17 +1094,25 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
     /* Prefix Operators */
     if (is_unary_prefix_operator_token(it[0])) {
-        found = true;
-
         token *operator_token = it;
+        bool is_value_prefix_expression = false;
 
-        flag_recognized_structure(&it, context, "Evaluable: Unary Prefix Operator");
-        eat_token(&it); /* <operator> */
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        eat_token(&it);
+        is_value_prefix_expression = parse_evaluable_expression(&it, context);
+        END_HYPOTHETICAL_PARSE_BLOCK();
 
-        EMIT_TEXT("%s", operator_token->text);
+        it = operator_token;
 
-        if (!parse_evaluable_expression(&it, context)) {
-            flag_unrecognized_structure(&it, context, "Evaluable Expression After Unary Prefix Operator");
+        if (is_value_prefix_expression) {
+            found = true;
+
+            flag_recognized_structure(&it, context, "Evaluable: Unary Prefix Operator");
+            eat_token(&it); /* <operator> */
+
+            EMIT_TEXT("%s", operator_token->text);
+            parse_evaluable_expression(&it, context);
+
         }
     }
 
