@@ -384,12 +384,31 @@ bool is_identifier_char(char character) {
 #define EMIT_TEXT_INDENT(...) if (context->parse_mode) { fprintf(context->output_file, "%*s", 4*context->indent_depth, ""); fprintf(context->output_file, __VA_ARGS__); };
 #define EMIT_TEXT(...) if (context->parse_mode) { fprintf(context->output_file, __VA_ARGS__); };
 
+#ifdef GENERATE_STRUCTURE_FILE
+#define EMIT_STRUCTURE_FILE_LINE(...) fprintf(context->structure_file, "%*s", 4*context->parse_depth, ""); fprintf(context->structure_file, __VA_ARGS__)
+#else
+#define EMIT_STRUCTURE_FILE_LINE(...)
+#endif
+
 #define PARSE_MODE_OUTPUT    1
 #define PARSE_MODE_NO_OUTPUT 0
 
-/* For structures that require non-trivial parising to identify before outputing. */
-#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() context->parse_mode = PARSE_MODE_NO_OUTPUT;
-#define END_HYPOTHETICAL_PARSE_BLOCK()   context->parse_mode = PARSE_MODE_OUTPUT;
+#define BEGIN_PARSE_BLOCK(ID) EMIT_STRUCTURE_FILE_LINE("Begin Parse Block: %s\n", ID); context->parse_depth++;
+#define END_PARSE_BLOCK(ID)   context->parse_depth--; EMIT_STRUCTURE_FILE_LINE("End Parse Block: %s\n", ID);
+
+/* For structures that require non-trivial parsing to identify before outputing. */
+#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() if (context->parse_mode_gate_depth == 0) { \
+    EMIT_STRUCTURE_FILE_LINE(">>> BEGIN HYPOTHETICAL - depth: %i, gate: %i, Line: %i\n", context->parse_depth, context->parse_mode_gate_depth, __LINE__); \
+    context->parse_depth++;                                 \
+    context->parse_mode_gate_depth = context->parse_depth;  \
+    context->parse_mode = PARSE_MODE_NO_OUTPUT;             \
+}
+#define END_HYPOTHETICAL_PARSE_BLOCK() if (context->parse_mode_gate_depth == context->parse_depth) {   \
+    context->parse_mode_gate_depth = 0;                         \
+    context->parse_depth--;                                     \
+    EMIT_STRUCTURE_FILE_LINE("<<<   END HYPOTHETICAL - depth: %i, gate: %i, Line: %i\n", context->parse_depth, context->parse_mode_gate_depth, __LINE__); \
+    context->parse_mode = PARSE_MODE_OUTPUT;                    \
+}
 
 /* Sets flags to allow type parsing to be more greedy for casts and sizeof statements. */
 #define BEGIN_TYPE_AS_ARGUMENT_BLOCK() context->parse_type_as_argument = true;
@@ -401,6 +420,7 @@ typedef struct {
     FILE *structure_file;
 #endif
     bool parse_mode;
+    int parse_mode_gate_depth;
     int parse_depth;
     int indent_depth;
     int line_number;
@@ -484,8 +504,8 @@ bool is_assignment_operator_token(token it) {
 }
 
 bool is_unary_prefix_operator_token(token it) {
-    if (it.type == TOKEN_TYPE_STAR            ||
-            it.type == TOKEN_TYPE_BITWISE_AND ||  /* (Address) */
+    if (it.type == TOKEN_TYPE_STAR            ||  /* (Dereference) */
+            it.type == TOKEN_TYPE_BITWISE_AND ||  /* (Address)     */
             it.type == TOKEN_TYPE_BITWISE_NOT ||
             it.type == TOKEN_TYPE_NOT         ||
             it.type == TOKEN_TYPE_LEFT_SHIFT  ||
@@ -530,10 +550,11 @@ void flag_recognized_structure(token **token_at, parse_context *context, char *s
     token *it = *token_at;
 
 #if GENERATE_STRUCTURE_FILE
-    if (context->parse_mode == PARSE_MODE_OUTPUT)
-        fprintf(context->structure_file, "%s (%s) Token: %i, Line: %i, Char: %i \n", structure_identifier, it->text, it->id, it->line_number, it->char_number);
-    else
-        fprintf(context->structure_file, "HYPOTHETICAL - %s (%s) Token: %i, Line: %i, Char: %i \n", structure_identifier, it->text, it->id, it->line_number, it->char_number);
+    if (context->parse_mode == PARSE_MODE_OUTPUT) {
+        EMIT_STRUCTURE_FILE_LINE("%s Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
+    } else {
+        EMIT_STRUCTURE_FILE_LINE("HYPOTHETICAL - %s Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
+    }
 #else
     if (context->parse_mode == PARSE_MODE_NO_OUTPUT)
         return;
@@ -554,7 +575,7 @@ void flag_unrecognized_structure(token **token_at, parse_context *context, char 
     token *it = *token_at;
 
 #if GENERATE_STRUCTURE_FILE
-    fprintf(context->structure_file, "***UNREC %i (%s) Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
+    EMIT_STRUCTURE_FILE_LINE("***UNREC %i (%s) Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
 #endif
 
     if (!context->first_unrecognized_token) {
@@ -592,12 +613,12 @@ bool parse_blank_line(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_BLANK_LINE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Blank Line");
 
     flag_recognized_structure(&it, context, "Blank Line");
     eat_token(&it);
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Blank Line");
     *token_at = it;
     return true;
 }
@@ -608,7 +629,7 @@ bool parse_line_comment(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_LINE_COMMENT) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Line Comment");
 
     token *comment_token = it;
 
@@ -622,7 +643,7 @@ bool parse_line_comment(token **token_at, parse_context *context) {
         EMIT_TEXT_INDENT("//%s", comment_token->text);
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Line Comment");
     *token_at = it;
     return true;
 }
@@ -633,7 +654,7 @@ bool parse_block_comment(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_BLOCK_COMMENT) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Block Comment");
 
     token *comment_token = it;
 
@@ -651,7 +672,7 @@ bool parse_block_comment(token **token_at, parse_context *context) {
         EMIT_TEXT_INDENT("/*%s*/", comment_token->text);
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Block Comment");
     *token_at = it;
     return true;
 }
@@ -662,7 +683,7 @@ bool parse_include(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_PRE_INCLUDE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("#include");
 
     /* Library Includes */
     if (it[1].type == TOKEN_TYPE_OPEN_ANGLE_BRACE
@@ -697,7 +718,7 @@ bool parse_include(token **token_at, parse_context *context) {
         eat_tokens(&it, 2);
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("#include");
     *token_at = it;
     return true;
 }
@@ -719,7 +740,7 @@ bool parse_define(token **token_at, parse_context *context) {
     if (!is_translatable_define) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("#define");
 
     token *define_token = it;
 
@@ -728,7 +749,7 @@ bool parse_define(token **token_at, parse_context *context) {
 
     EMIT_TEXT("%s :: %s", define_token[1].text, define_token[2].text);
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("#define");
     *token_at = it;
     return true;
 }
@@ -739,7 +760,7 @@ bool parse_general_preprocessor(token **token_at, parse_context *context) {
     if (!is_preprocessor_token(it[0])) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Preprocessor Directive");
 
     context->unsupported_count++;
     issue_warning(warning_type_ternary);
@@ -759,14 +780,14 @@ bool parse_general_preprocessor(token **token_at, parse_context *context) {
         eat_token(&it);
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Preprocessor Directive");
     *token_at = it;
     return true;
 }
 
 bool parse_type_expression(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Potential Type Expression");
 
     type_description desc;
 
@@ -870,7 +891,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
             eat_token(&it);
 
         /* Pointers */
-        } else if (it[0].type == TOKEN_TYPE_STAR) {
+        } else if (it[0].type == TOKEN_TYPE_STAR && it != type_expr_start) {
             flag_recognized_structure(&it, context, "Type Expression");
             desc.indirection_count++;
             eat_token(&it);
@@ -887,11 +908,13 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         }
     }
 
+    END_PARSE_BLOCK("Potential Type Expression");
     /* No tokens eaten, not a type expression */
     if (it == type_expr_start) {
-        context->parse_depth--;
         return false;
     }
+
+    BEGIN_PARSE_BLOCK("Type Expression");
 
     /* resolve c-style types to jai-style types */
     if (desc.indirection_count > 0) {
@@ -938,7 +961,7 @@ bool parse_type_expression(token **token_at, parse_context *context) {
         assert(false);
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Type Expression");
     *token_at = it;
     return true;
 }
@@ -949,7 +972,7 @@ bool parse_array_subscript(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_OPEN_SQUARE_BRACE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Array Subscript");
 
     while (it[0].type==TOKEN_TYPE_OPEN_SQUARE_BRACE) {
         eat_token(&it); /* "[" */
@@ -966,14 +989,14 @@ bool parse_array_subscript(token **token_at, parse_context *context) {
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Array Subscript");
     *token_at = it;
     return true;
 }
 
 bool parse_subscripts_and_dereferences(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Potential Subscripts and dereferences");
 
     bool found = false;
     bool parsing = true;
@@ -1003,7 +1026,7 @@ bool parse_subscripts_and_dereferences(token **token_at, parse_context *context)
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Potential Subscripts and dereferences");
     *token_at = it;
     return found;
 }
@@ -1011,7 +1034,7 @@ bool parse_subscripts_and_dereferences(token **token_at, parse_context *context)
 bool parse_evaluable_expression(token **token_at, parse_context *context) {
     token *it = *token_at;
 
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Evaluable Expression");
 
     bool found = false;
 
@@ -1127,7 +1150,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
         EMIT_TEXT("%s(", function_name_token->text);
 
-        context->parse_depth++;
+        BEGIN_PARSE_BLOCK("Function Call");
         while (it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
             if (!parse_evaluable_expression(&it, context)) {
                 flag_unrecognized_structure(&it, context, "Function Argument in Evaluable Function Call");
@@ -1140,7 +1163,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
                 EMIT_TEXT(", ");
             }
         }
-        context->parse_depth--;
+        END_PARSE_BLOCK("Function Call");
 
         flag_recognized_structure(&it, context, "Evaluable: Function: End of Arguments");
         eat_token(&it); /* ")" */
@@ -1205,7 +1228,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
     }
 
     if (!found) {
-        context->parse_depth--;
+        END_PARSE_BLOCK("Evaluable Expression");
         return false;
     }
 
@@ -1261,14 +1284,14 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Evaluable Expression");
     *token_at = it;
     return true;
 }
 
 bool parse_statement(token **token_at, parse_context *context) {
     token *it = *token_at;
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Statement");
 
     token *statement_start = it;
 
@@ -1276,7 +1299,7 @@ bool parse_statement(token **token_at, parse_context *context) {
     if (parse_variable_declaration(&it, context)) {
         /* Note parse_vairable_declaration eats entire statement to ';'. */
 
-        context->parse_depth--;
+        END_PARSE_BLOCK("Statement");
         *token_at = it;
         return true;
     }
@@ -1338,11 +1361,11 @@ bool parse_statement(token **token_at, parse_context *context) {
         EMIT_TEXT(";");
 
         *token_at = it;
-        context->parse_depth--;
+        END_PARSE_BLOCK("Statement");
         return true;
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Statement");
     return false;
 }
 
@@ -1352,7 +1375,7 @@ bool parse_if(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_IF) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("If");
 
     flag_recognized_structure(&it, context, "If Statement");
     eat_token(&it); /* "if" */
@@ -1404,7 +1427,7 @@ bool parse_if(token **token_at, parse_context *context) {
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("If");
     *token_at = it;
     return true;
 }
@@ -1415,7 +1438,7 @@ bool parse_for(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_FOR) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("For Loop");
 
     flag_recognized_structure(&it, context, "For Statement");
     eat_token(&it); /* "for" */
@@ -1427,7 +1450,7 @@ bool parse_for(token **token_at, parse_context *context) {
     EMIT_TEXT("for (");
 
     /* For Loop Control Statements */
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("For Control Statements");
     if (!parse_statement(&it, context)) {
         flag_unrecognized_structure(&it, context, "For Statement: Initializer");
     }
@@ -1441,7 +1464,7 @@ bool parse_for(token **token_at, parse_context *context) {
     if (!parse_evaluable_expression(&it, context)) {
         flag_unrecognized_structure(&it, context, "For Statement: Increment");
     }
-    context->parse_depth--;
+    END_PARSE_BLOCK("For Control Statements");
 
     if (it[0].type == TOKEN_TYPE_CLOSE_PAREN) {
         eat_token(&it); /* ")" */
@@ -1454,7 +1477,7 @@ bool parse_for(token **token_at, parse_context *context) {
         flag_unrecognized_structure(&it, context, "For Statement: Scope");
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("For Loop");
     *token_at = it;
     return true;
 }
@@ -1465,7 +1488,7 @@ bool parse_while(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_WHILE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("While Loop");
 
     flag_recognized_structure(&it, context, "While Statement");
     eat_token(&it); /* "while" */
@@ -1477,11 +1500,11 @@ bool parse_while(token **token_at, parse_context *context) {
         eat_token(&it); /* "(" */
     }
 
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("While Conditional");
     if (!parse_evaluable_expression(&it, context)) {
         flag_unrecognized_structure(&it, context, "While Statement: Conditional");
     }
-    context->parse_depth--;
+    END_PARSE_BLOCK("While Conditional");
 
     if (it[0].type==TOKEN_TYPE_CLOSE_PAREN) {
         flag_recognized_structure(&it, context, "While Statement: End of Conditional");
@@ -1495,7 +1518,7 @@ bool parse_while(token **token_at, parse_context *context) {
         flag_unrecognized_structure(&it, context, "While Statement: Scope");
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("While Loop");
     *token_at = it;
     return true;
 }
@@ -1506,7 +1529,7 @@ bool parse_do(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_DO) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Do Loop");
 
     flag_recognized_structure(&it, context, "Do-While Statement");
     eat_token(&it); /* "do" */
@@ -1542,7 +1565,7 @@ bool parse_do(token **token_at, parse_context *context) {
 
     EMIT_TEXT(");");
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Do Loop");
     *token_at = it;
     return true;
 }
@@ -1553,7 +1576,7 @@ bool parse_goto(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_GOTO) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Goto");
 
     context->unsupported_count++;
     issue_warning(warning_type_goto);
@@ -1574,7 +1597,7 @@ bool parse_goto(token **token_at, parse_context *context) {
 
     EMIT_TEXT("goto %s;", label_name);
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Goto");
     *token_at = it;
     return true;
 }
@@ -1585,7 +1608,7 @@ bool parse_goto_label(token **token_at, parse_context *context) {
     if (!(it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_COLON)) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Goto Label");
 
     context->unsupported_count++;
     issue_warning(warning_type_goto);
@@ -1597,7 +1620,7 @@ bool parse_goto_label(token **token_at, parse_context *context) {
 
     EMIT_TEXT("%s:", label_token->text);
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Goto Label");
     *token_at = it;
     return true;
 }
@@ -1608,7 +1631,7 @@ bool parse_switch(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_SWITCH) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Switch");
 
     flag_recognized_structure(&it, context, "Switch Statement");
     eat_token(&it); /* "switch" */
@@ -1640,8 +1663,8 @@ bool parse_switch(token **token_at, parse_context *context) {
         flag_unrecognized_structure(&it, context, "Switch Statement: Scope");
     }
 
+    END_PARSE_BLOCK("Switch");
     *token_at = it;
-    context->parse_depth--;
     return true;
 }
 
@@ -1651,7 +1674,7 @@ bool parse_case(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_CASE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Switch Case");
 
     context->unsupported_count++;
     issue_warning(warning_type_switch);
@@ -1673,7 +1696,7 @@ bool parse_case(token **token_at, parse_context *context) {
     EMIT_TEXT(":");
     context->indent_depth++;
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Switch Case");
     *token_at = it;
     return true;
 }
@@ -1684,7 +1707,7 @@ bool parse_default(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_DEFAULT) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Switch Default");
 
     context->unsupported_count++;
     issue_warning(warning_type_switch);
@@ -1699,7 +1722,7 @@ bool parse_default(token **token_at, parse_context *context) {
     if (it[0].type == TOKEN_TYPE_COLON)
         eat_token(&it);
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Switch Default");
     *token_at = it;
     return true;
 }
@@ -1729,7 +1752,7 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
     if (!continue_parsing) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Variable Declaration");
 
     char *variable_name = it[0].text;
 
@@ -1798,7 +1821,7 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
 
     EMIT_TEXT(";");
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Variable Declaration");
     *token_at = it;
     return true;
 }
@@ -1809,7 +1832,7 @@ bool parse_scope(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Scope");
 
     flag_recognized_structure(&it, context, "Scope: Start");
     eat_token(&it); /* "{" */
@@ -1893,7 +1916,7 @@ bool parse_scope(token **token_at, parse_context *context) {
     EMIT_TEXT("\n");
     EMIT_TEXT_INDENT("}");
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Scope");
     *token_at = it;
     return true;
 }
@@ -1923,7 +1946,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     if (!parsing) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Function Declaration");
 
     token function_name_token = it[0];
 
@@ -1945,7 +1968,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     EMIT_TEXT("%s :: (", function_name_token.text);
 
     /* Parse Argument List */
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Function Arguments");
 
     while (it && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
 
@@ -1998,7 +2021,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         }
 
     }
-    context->parse_depth--;
+    END_PARSE_BLOCK("Function Arguments");
 
     flag_recognized_structure(&it, context, "Function: Arguments: End");
     eat_token(&it); /* ")" */
@@ -2030,7 +2053,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Function Declaration");
     *token_at = it;
     return true;
 }
@@ -2041,7 +2064,7 @@ bool parse_enum_def(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_ENUM || it[1].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Enum Definition");
 
     flag_recognized_structure(&it, context, "Enum Definition");
     eat_token(&it); /* "enum" */
@@ -2059,7 +2082,6 @@ bool parse_enum_def(token **token_at, parse_context *context) {
     eat_token(&it); /* "}" */
     END_HYPOTHETICAL_PARSE_BLOCK();
 
-    context->parse_depth++;
     char *enum_name;
     if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
         enum_name = it->text;
@@ -2074,6 +2096,8 @@ bool parse_enum_def(token **token_at, parse_context *context) {
     context->indent_depth++;
 
     it = enum_contents_start;
+
+    BEGIN_PARSE_BLOCK("Enum Contents");
     while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
 
         if (parse_line_comment(&it, context))
@@ -2108,7 +2132,7 @@ bool parse_enum_def(token **token_at, parse_context *context) {
             eat_token(&it);
         }
     }
-    context->parse_depth--;
+    END_PARSE_BLOCK("Enum Contents");
 
     if (it[0].type == TOKEN_TYPE_CLOSE_CURLY_BRACE) {
         flag_recognized_structure(&it, context, "Enum: Contents: End");
@@ -2130,7 +2154,7 @@ bool parse_enum_def(token **token_at, parse_context *context) {
     EMIT_TEXT("\n");
     EMIT_TEXT_INDENT("};");
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Enum Definition");
     *token_at = it;
     return true;
 }
@@ -2141,7 +2165,7 @@ bool parse_struct_def(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_KEYWORD_STRUCT || it[1].type != TOKEN_TYPE_OPEN_CURLY_BRACE) {
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Struct Definition");
 
     flag_recognized_structure(&it, context, "Struct Definition");
     eat_token(&it); /* "struct" */
@@ -2159,7 +2183,7 @@ bool parse_struct_def(token **token_at, parse_context *context) {
     eat_token(&it); /* "}" */
     END_HYPOTHETICAL_PARSE_BLOCK();
 
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Struct Contents");
     char *struct_name;
     if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
         struct_name = it->text;
@@ -2197,7 +2221,7 @@ bool parse_struct_def(token **token_at, parse_context *context) {
 
         flag_unrecognized_structure(&it, context, "Struct : Contents");
     }
-    context->parse_depth--;
+    END_PARSE_BLOCK("Struct Contents");
 
     if (it[0].type == TOKEN_TYPE_CLOSE_CURLY_BRACE) {
         flag_recognized_structure(&it, context, "Struct: End of Contents");
@@ -2219,7 +2243,7 @@ bool parse_struct_def(token **token_at, parse_context *context) {
     EMIT_TEXT("\n");
     EMIT_TEXT_INDENT("};");
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Struct Definition");
     *token_at = it;
     return true;
 }
@@ -2228,10 +2252,9 @@ bool parse_typedef(token **token_at, parse_context *context) {
     token *it = *token_at;
 
     if (it[0].type != TOKEN_TYPE_KEYWORD_TYPEDEF) {
-        context->parse_depth--;
         return false;
     }
-    context->parse_depth++;
+    BEGIN_PARSE_BLOCK("Typedef");
 
     flag_recognized_structure(&it, context, "Typedef");
     eat_token(&it); /* "typedef" */
@@ -2259,7 +2282,7 @@ bool parse_typedef(token **token_at, parse_context *context) {
         }
     }
 
-    context->parse_depth--;
+    END_PARSE_BLOCK("Typedef");
     *token_at = it;
     return true;
 }
