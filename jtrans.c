@@ -1902,6 +1902,12 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         is_static = true;
     }
 
+    bool is_extern = false;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_EXTERN) {
+        eat_token(&it, context, "Variable: Extern");
+        is_extern = true;
+    }
+
     token *function_start = it;
 
     bool parsing = true;
@@ -2003,6 +2009,9 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         EMIT_TEXT(") -> ");
         parse_type_expression(&it, context);
     }
+
+    if (is_extern)
+        EMIT_TEXT(" #foreign");
 
     it = end_of_arguments;
 
