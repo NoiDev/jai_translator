@@ -124,6 +124,7 @@ typedef enum {
     TOKEN_TYPE_NUMBER,
     TOKEN_TYPE_IDENTIFIER,
     TOKEN_TYPE_BLANK_LINE,
+    TOKEN_TYPE_END_OF_FILE,
 
     TOKEN_TYPE_COUNT
 } token_type;
@@ -2356,7 +2357,7 @@ int main (int argc, char *argv[]) {
 
 
     /* Lookup Table Setup */
-    int token_lookup_count = TOKEN_TYPE_COUNT-7; /* Total - number of container tokens (not in lookup table) */
+    int token_lookup_count = TOKEN_TYPE_COUNT-8; /* Total - number of container tokens (not in lookup table) */
     char *token_lookup[token_lookup_count];
     init_token_lookup_table(token_lookup);
 
@@ -2566,6 +2567,7 @@ int main (int argc, char *argv[]) {
             printf("Unrecognized character: \'%c\' (%i), Context: \"%.21s\"\n", at[0], (int)at[0], &at[-10]);
             eat_character(&at);
         }
+        add_token(TOKEN_TYPE_END_OF_FILE, token_at, "EOF", 3, at, token_context);
         if (token_context->last_token_id > token_context->token_buffer_size) {
             printf("File is larger than the default token buffer (%i).\n", token_context->token_buffer_size);
             printf("Resizing token buffer from %i to %i and reparsing.\n", token_context->token_buffer_size, token_context->last_token_id);
@@ -2652,7 +2654,7 @@ int main (int argc, char *argv[]) {
         eat_token_unrecognized(&token_at, context, "Global Scope");
     }
 
-    /* Close up any remaning unirecognized blocks. */
+    /* Close up any remaning unrecognized blocks. */
     eat_token(&token_at, context, "End of File");
 
     int line_count = token_at[-1].line_number;
