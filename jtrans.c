@@ -1214,6 +1214,20 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
         eat_token(&it, context, "Evaluable: Character Literal");
         EMIT_TEXT("#char \"%s\"", value_token->text);
+
+    /* File Macro */
+    } else if (it[0].type == TOKEN_TYPE_PRE_FILE_MACRO) {
+        found = true;
+
+        eat_token(&it, context, "Evaluable: Preprocessor File Macro");
+        EMIT_TEXT("#file");
+
+    /* Line Macro */
+    } else if (it[0].type == TOKEN_TYPE_PRE_LINE_MACRO) {
+        found = true;
+
+        eat_token(&it, context, "Evaluable: Preprocessor Line Macro");
+        EMIT_TEXT("#line");
     }
 
     if (!found) {
