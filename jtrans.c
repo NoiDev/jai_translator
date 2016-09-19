@@ -124,6 +124,7 @@ typedef enum {
     TOKEN_TYPE_NUMBER,
     TOKEN_TYPE_IDENTIFIER,
     TOKEN_TYPE_BLANK_LINE,
+    TOKEN_TYPE_END_OF_FILE,
 
     TOKEN_TYPE_COUNT
 } token_type;
@@ -397,17 +398,17 @@ bool is_identifier_char(char character) {
 #define END_PARSE_BLOCK(ID)   context->parse_depth--; EMIT_STRUCTURE_FILE_LINE("End Parse Block: %s\n", ID);
 
 /* For structures that require non-trivial parsing to identify before outputing. */
-#define BEGIN_HYPOTHETICAL_PARSE_BLOCK() if (context->parse_mode_gate_depth == 0) { \
-    EMIT_STRUCTURE_FILE_LINE(">>> BEGIN HYPOTHETICAL - depth: %i, gate: %i, Line: %i\n", context->parse_depth, context->parse_mode_gate_depth, __LINE__); \
-    context->parse_depth++;                                 \
-    context->parse_mode_gate_depth = context->parse_depth;  \
-    context->parse_mode = PARSE_MODE_NO_OUTPUT;             \
+#define BEGIN_HYPOTHETICAL_PARSE_BLOCK(TAG) if (context->parse_mode_gate_depth == 0) { \
+    EMIT_STRUCTURE_FILE_LINE(">>> BEGIN HYPOTHETICAL: %s\n", TAG);  \
+    context->parse_depth++;                                         \
+    context->parse_mode_gate_depth = context->parse_depth;          \
+    context->parse_mode = PARSE_MODE_NO_OUTPUT;                     \
 }
-#define END_HYPOTHETICAL_PARSE_BLOCK() if (context->parse_mode_gate_depth == context->parse_depth) {   \
-    context->parse_mode_gate_depth = 0;                         \
-    context->parse_depth--;                                     \
-    EMIT_STRUCTURE_FILE_LINE("<<<   END HYPOTHETICAL - depth: %i, gate: %i, Line: %i\n", context->parse_depth, context->parse_mode_gate_depth, __LINE__); \
-    context->parse_mode = PARSE_MODE_OUTPUT;                    \
+#define END_HYPOTHETICAL_PARSE_BLOCK(TAG) if (context->parse_mode_gate_depth == context->parse_depth) {   \
+    context->parse_mode_gate_depth = 0;                             \
+    context->parse_depth--;                                         \
+    EMIT_STRUCTURE_FILE_LINE("<<< END HYPOTHETICAL: %s\n", TAG);    \
+    context->parse_mode = PARSE_MODE_OUTPUT;                        \
 }
 
 /* Sets flags to allow type parsing to be more greedy for casts and sizeof statements. */
@@ -539,9 +540,9 @@ void eat_token(token **token_at, parse_context *context, char *structure_identif
 
 #if GENERATE_STRUCTURE_FILE
     if (context->parse_mode == PARSE_MODE_OUTPUT) {
-        EMIT_STRUCTURE_FILE_LINE("%s Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
+        EMIT_STRUCTURE_FILE_LINE("%s - Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
     } else {
-        EMIT_STRUCTURE_FILE_LINE("HYPOTHETICAL - %s Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
+        EMIT_STRUCTURE_FILE_LINE("(SILENT) %s - Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
     }
 #else
     if (context->parse_mode == PARSE_MODE_NO_OUTPUT)
@@ -566,7 +567,7 @@ void eat_token_unrecognized(token **token_at, parse_context *context, char *expe
     token *it = *token_at;
 
 #if GENERATE_STRUCTURE_FILE
-    EMIT_STRUCTURE_FILE_LINE("***UNREC %i (%s) Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
+    EMIT_STRUCTURE_FILE_LINE("*** UNRECOGNIZED *** %i (\"%s\") Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
 #endif
 
     if (!context->first_unrecognized_token) {
@@ -1044,7 +1045,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
         bool cast;
 
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for cast expression");
         BEGIN_TYPE_AS_ARGUMENT_BLOCK();
         cast = parse_type_expression(&it, context);
         END_TYPE_AS_ARGUMENT_BLOCK();
@@ -1053,7 +1054,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
             eat_token(&it, context, "Parenthetical: End of potential cast");
             cast = parse_evaluable_expression(&it, context); /* Check for object of cast */
         }
-        END_HYPOTHETICAL_PARSE_BLOCK();
+        END_HYPOTHETICAL_PARSE_BLOCK("Test for cast expression");
 
         it = contents_start;
 
@@ -1097,10 +1098,10 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
         token *operator_token = it;
         bool is_value_prefix_expression = false;
 
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for target of prefix operator");
         eat_token(&it, context, "Potential Prefix Operator");
         is_value_prefix_expression = parse_evaluable_expression(&it, context);
-        END_HYPOTHETICAL_PARSE_BLOCK();
+        END_HYPOTHETICAL_PARSE_BLOCK("Test for target of prefix operator");
 
         it = operator_token;
 
@@ -1214,6 +1215,20 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
 
         eat_token(&it, context, "Evaluable: Character Literal");
         EMIT_TEXT("#char \"%s\"", value_token->text);
+
+    /* File Macro */
+    } else if (it[0].type == TOKEN_TYPE_PRE_FILE_MACRO) {
+        found = true;
+
+        eat_token(&it, context, "Evaluable: Preprocessor File Macro");
+        EMIT_TEXT("#file");
+
+    /* Line Macro */
+    } else if (it[0].type == TOKEN_TYPE_PRE_LINE_MACRO) {
+        found = true;
+
+        eat_token(&it, context, "Evaluable: Preprocessor Line Macro");
+        EMIT_TEXT("#line");
     }
 
     if (!found) {
@@ -1288,7 +1303,7 @@ bool parse_statement(token **token_at, parse_context *context) {
     /* Assignment */
     bool parse_assignment = false;
 
-    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for assignment");
     while (it[0].type != TOKEN_TYPE_SEMICOLON) {
         if (is_assignment_operator_token(it[0])) {
             eat_token(&it, context, "Statement: Found assignment token");
@@ -1297,7 +1312,7 @@ bool parse_statement(token **token_at, parse_context *context) {
         }
         eat_token(&it, context, "Statement: Scan for assignment token");
     }
-    END_HYPOTHETICAL_PARSE_BLOCK();
+    END_HYPOTHETICAL_PARSE_BLOCK("Test for assignment");
 
     it = statement_start;
 
@@ -1712,7 +1727,7 @@ bool parse_default(token **token_at, parse_context *context) {
 bool parse_variable_declaration(token **token_at, parse_context *context) {
     token *it = *token_at;
 
-    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for Variable Declaration");
     bool is_static = false;
     if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
         eat_token(&it, context, "Variable: Static");
@@ -1728,7 +1743,7 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_IDENTIFIER) {
         continue_parsing = false;
     }
-    END_HYPOTHETICAL_PARSE_BLOCK();
+    END_HYPOTHETICAL_PARSE_BLOCK("Test for Variable Declaration");
 
     if (!continue_parsing) {
         return false;
@@ -1895,11 +1910,17 @@ bool parse_scope(token **token_at, parse_context *context) {
 bool parse_function_definition(token **token_at, parse_context *context) {
     token *it = *token_at;
 
-    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for Function Declaration");
     bool is_static = false;
     if (it[0].type == TOKEN_TYPE_KEYWORD_STATIC) {
         eat_token(&it, context, "Function Declaration: Static");
         is_static = true;
+    }
+
+    bool is_extern = false;
+    if (it[0].type == TOKEN_TYPE_KEYWORD_EXTERN) {
+        eat_token(&it, context, "Variable: Extern");
+        is_extern = true;
     }
 
     token *function_start = it;
@@ -1911,7 +1932,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
     if (it[0].type != TOKEN_TYPE_IDENTIFIER) {
         parsing = false;
     }
-    END_HYPOTHETICAL_PARSE_BLOCK();
+    END_HYPOTHETICAL_PARSE_BLOCK("Test for Function Declaration");
 
     if (!parsing) {
         return false;
@@ -1951,12 +1972,12 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         bool found_type_exp = true;
         token *argument_start = it;
 
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK("Test for type expression for argument");
         if (!parse_type_expression(&it, context)) {
             found_type_exp = false;
             eat_token_unrecognized(&it, context, "Function Argument");
         }
-        END_HYPOTHETICAL_PARSE_BLOCK();
+        END_HYPOTHETICAL_PARSE_BLOCK("Test for type expression for argument");
 
         bool has_name = false;
         if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
@@ -2004,6 +2025,9 @@ bool parse_function_definition(token **token_at, parse_context *context) {
         parse_type_expression(&it, context);
     }
 
+    if (is_extern)
+        EMIT_TEXT(" #foreign");
+
     it = end_of_arguments;
 
     if (it[0].type == TOKEN_TYPE_SEMICOLON) {
@@ -2040,12 +2064,12 @@ bool parse_enum_def(token **token_at, parse_context *context) {
 
     token *enum_contents_start = it;
 
-    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK("Skipping over contents temporarily");
     while (it->type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
         eat_token(&it, context, "Enum Definition: Skip over contents");
     }
     eat_token(&it, context, "Enum Definition: End of Scope");
-    END_HYPOTHETICAL_PARSE_BLOCK();
+    END_HYPOTHETICAL_PARSE_BLOCK("Skipping over contents temporarily");
 
     char *enum_name;
     if (it[0].type == TOKEN_TYPE_IDENTIFIER) {
@@ -2136,12 +2160,12 @@ bool parse_struct_def(token **token_at, parse_context *context) {
 
     token *struct_contents_start = it;
 
-    BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+    BEGIN_HYPOTHETICAL_PARSE_BLOCK("Skipping over contents temporarily");
     while (it[0].type != TOKEN_TYPE_CLOSE_CURLY_BRACE) {
         eat_token(&it, context, "Struct Definition: Skip over contents");
     }
     eat_token(&it, context, "Struct Definition: End of Scope");
-    END_HYPOTHETICAL_PARSE_BLOCK();
+    END_HYPOTHETICAL_PARSE_BLOCK("Skipping over contents temporarily");
 
     BEGIN_PARSE_BLOCK("Struct Contents");
     char *struct_name;
@@ -2220,9 +2244,9 @@ bool parse_typedef(token **token_at, parse_context *context) {
     } else {
         token *base_type_start = it;
 
-        BEGIN_HYPOTHETICAL_PARSE_BLOCK();
+        BEGIN_HYPOTHETICAL_PARSE_BLOCK("Skipping over type expression temporarily");
         parse_type_expression(&it, context);
-        END_HYPOTHETICAL_PARSE_BLOCK();
+        END_HYPOTHETICAL_PARSE_BLOCK("Skipping over type expression temporarily");
 
         if (it[0].type == TOKEN_TYPE_IDENTIFIER && it[1].type == TOKEN_TYPE_SEMICOLON) {
             token *type_name_token = &it[0];
@@ -2333,7 +2357,7 @@ int main (int argc, char *argv[]) {
 
 
     /* Lookup Table Setup */
-    int token_lookup_count = TOKEN_TYPE_COUNT-7; /* Total - number of container tokens (not in lookup table) */
+    int token_lookup_count = TOKEN_TYPE_COUNT-8; /* Total - number of container tokens (not in lookup table) */
     char *token_lookup[token_lookup_count];
     init_token_lookup_table(token_lookup);
 
@@ -2543,6 +2567,7 @@ int main (int argc, char *argv[]) {
             printf("Unrecognized character: \'%c\' (%i), Context: \"%.21s\"\n", at[0], (int)at[0], &at[-10]);
             eat_character(&at);
         }
+        add_token(TOKEN_TYPE_END_OF_FILE, token_at, "EOF", 3, at, token_context);
         if (token_context->last_token_id > token_context->token_buffer_size) {
             printf("File is larger than the default token buffer (%i).\n", token_context->token_buffer_size);
             printf("Resizing token buffer from %i to %i and reparsing.\n", token_context->token_buffer_size, token_context->last_token_id);
@@ -2629,7 +2654,7 @@ int main (int argc, char *argv[]) {
         eat_token_unrecognized(&token_at, context, "Global Scope");
     }
 
-    /* Close up any remaning unirecognized blocks. */
+    /* Close up any remaning unrecognized blocks. */
     eat_token(&token_at, context, "End of File");
 
     int line_count = token_at[-1].line_number;
