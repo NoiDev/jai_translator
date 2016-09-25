@@ -385,7 +385,7 @@ bool is_identifier_char(char character) {
 #define EMIT_TEXT_INDENT(...) if (context->parse_mode) { fprintf(context->output_file, "%*s", 4*context->indent_depth, ""); fprintf(context->output_file, __VA_ARGS__); };
 #define EMIT_TEXT(...) if (context->parse_mode) { fprintf(context->output_file, __VA_ARGS__); };
 
-#ifdef GENERATE_STRUCTURE_FILE
+#if GENERATE_STRUCTURE_FILE
 #define EMIT_STRUCTURE_FILE_LINE(...) fprintf(context->structure_file, "%*s", 4*context->parse_depth, ""); fprintf(context->structure_file, __VA_ARGS__)
 #else
 #define EMIT_STRUCTURE_FILE_LINE(...)
