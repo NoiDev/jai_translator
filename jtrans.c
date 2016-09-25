@@ -6,7 +6,7 @@
 #include <assert.h>
 
 #define GENERATE_TOKEN_FILE     0
-#define GENERATE_STRUCTURE_FILE 1
+#define GENERATE_STRUCTURE_FILE 0
 
 #define DEFAULT_TOKEN_BUFFER_SIZE 1024
 
