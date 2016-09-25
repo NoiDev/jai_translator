@@ -544,9 +544,6 @@ void eat_token(token **token_at, parse_context *context, char *structure_identif
     } else {
         EMIT_STRUCTURE_FILE_LINE("(SILENT) %s - Token: #%i, Type: %i, Text: \"%s\", Line: %i, Char: %i \n", structure_identifier, it->id, it->type, it->text, it->line_number, it->char_number);
     }
-#else
-    if (context->parse_mode == PARSE_MODE_NO_OUTPUT)
-        return;
 #endif
 
     if (context->first_unrecognized_token) {
@@ -565,10 +562,7 @@ void eat_token_unrecognized(token **token_at, parse_context *context, char *expe
         return;
 
     token *it = *token_at;
-
-#if GENERATE_STRUCTURE_FILE
     EMIT_STRUCTURE_FILE_LINE("*** UNRECOGNIZED *** %i (\"%s\") Exp: %s Line: %i, Char: %i \n", it->type, it->text, expected_structure, it->line_number, it->char_number);
-#endif
 
     if (!context->first_unrecognized_token) {
         context->unrecognized_count++;
