@@ -246,55 +246,6 @@ void init_token_lookup_table(char *token_lookup[]) {
 }
 
 
-typedef enum {
-    warning_type_goto,
-    warning_type_switch,
-    warning_type_ternary,
-    warning_type_preprocessor,
-    warning_type_static_function,
-    warning_type_static_variable,
-
-    warning_type_count
-} warning_type;
-
-void issue_warning(warning_type type) {
-    static int warning_counts[warning_type_count];
-
-    warning_counts[type]++;
-
-    if (warning_counts[type] > 1)
-        return;
-
-    switch (type) {
-        case warning_type_goto:
-            printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
-            printf("   Note: \"goto\" statements and related labels have been left intact.\n");
-            break;
-        case warning_type_switch:
-            printf("Warning: Uses switch construct, which is currently not supported by JAI.\n");
-            printf("   Note: \"switch\", \"case\", and \"default\" statements  have been left intact.\n");
-            break;
-        case warning_type_ternary:
-            printf("Warning: Uses ternary operator, which is currently not supported by JAI.\n");
-            printf("   Note: Ternary statements have been left intact.\n");
-            break;
-        case warning_type_preprocessor:
-            printf("Warning: Uses preprocessor directives that are not currently not supported by JAI.\n");
-            printf("   Note: #include and some of #define are automatically translated, all others are left intact.\n");
-        case warning_type_static_function:
-            printf("Warning: Uses static functions which are not currently not supported by JAI.\n");
-            printf("   Note: Static functions will be defined as normal, with a /* static */ tag before the definition.\n");
-            break;
-        case warning_type_static_variable:
-            printf("Warning: Uses static variables which are not currently not supported by JAI.\n");
-            printf("   Note: Static variables will be defined as normal, with a /* static */ tag before the definition.\n");
-            break;
-        default:
-            break;
-    }
-}
-
-
 /* Tokenization */
 
 #define ASCII_NULL       0
@@ -443,6 +394,7 @@ bool parse_evaluable_expression();
 bool parse_enum_def();
 bool parse_struct_def();
 bool parse_typedef();
+void issue_warning();
 
 typedef enum {
     variable_type_void, /* void */
@@ -466,6 +418,17 @@ typedef struct {
     int size; /* in bits */
     char *text;
 } type_description;
+
+typedef enum {
+    warning_type_goto,
+    warning_type_switch,
+    warning_type_ternary,
+    warning_type_preprocessor,
+    warning_type_static_function,
+    warning_type_static_variable,
+
+    warning_type_count
+} warning_type;
 
 bool is_preprocessor_token(token it) {
     if (it.type >= TOKEN_TYPE_PRE_INCLUDE &&
@@ -755,8 +718,7 @@ bool parse_general_preprocessor(token **token_at, parse_context *context) {
     }
     BEGIN_PARSE_BLOCK("Preprocessor Directive");
 
-    context->unsupported_count++;
-    issue_warning(warning_type_ternary);
+    issue_warning(warning_type_ternary, context);
 
     int line_number_of_directive = it[0].line_number;
 
@@ -1255,7 +1217,7 @@ bool parse_evaluable_expression(token **token_at, parse_context *context) {
     if (it[0].type == TOKEN_TYPE_TERNARY) {
 
         context->unsupported_count++;
-        issue_warning(warning_type_ternary);
+        issue_warning(warning_type_ternary, context);
 
         eat_token(&it, context, "Evaluable: Ternary Operator: Start");
         EMIT_TEXT(" ? ");
@@ -1575,7 +1537,7 @@ bool parse_goto(token **token_at, parse_context *context) {
     BEGIN_PARSE_BLOCK("Goto");
 
     context->unsupported_count++;
-    issue_warning(warning_type_goto);
+    issue_warning(warning_type_goto, context);
 
     eat_token(&it, context, "Goto Statement: Goto");
 
@@ -1606,7 +1568,7 @@ bool parse_goto_label(token **token_at, parse_context *context) {
     BEGIN_PARSE_BLOCK("Goto Label");
 
     context->unsupported_count++;
-    issue_warning(warning_type_goto);
+    issue_warning(warning_type_goto, context);
 
     token *label_token = it;
 
@@ -1635,7 +1597,7 @@ bool parse_switch(token **token_at, parse_context *context) {
         eat_token(&it, context, "Switch Statement: Start of Test Value");
 
     context->unsupported_count++;
-    issue_warning(warning_type_switch);
+    issue_warning(warning_type_switch, context);
 
     bool parsing = true;
     while (parsing && it[0].type != TOKEN_TYPE_CLOSE_PAREN) {
@@ -1670,7 +1632,7 @@ bool parse_case(token **token_at, parse_context *context) {
     BEGIN_PARSE_BLOCK("Switch Case");
 
     context->unsupported_count++;
-    issue_warning(warning_type_switch);
+    issue_warning(warning_type_switch, context);
 
     eat_token(&it, context, "Case Statement");
 
@@ -1702,7 +1664,7 @@ bool parse_default(token **token_at, parse_context *context) {
     BEGIN_PARSE_BLOCK("Switch Default");
 
     context->unsupported_count++;
-    issue_warning(warning_type_switch);
+    issue_warning(warning_type_switch, context);
 
     eat_token(&it, context, "Default Statement");
 
@@ -1750,7 +1712,7 @@ bool parse_variable_declaration(token **token_at, parse_context *context) {
 
     if (is_static) {
         context->unsupported_count++;
-        issue_warning(warning_type_static_variable);
+        issue_warning(warning_type_static_variable, context);
 
         EMIT_TEXT("/* static */ ");
     }
@@ -1943,7 +1905,7 @@ bool parse_function_definition(token **token_at, parse_context *context) {
 
     if (is_static) {
         context->unsupported_count++;
-        issue_warning(warning_type_static_function);
+        issue_warning(warning_type_static_function, context);
 
         EMIT_TEXT("/* static */ ");
     }
@@ -2260,6 +2222,49 @@ bool parse_typedef(token **token_at, parse_context *context) {
     END_PARSE_BLOCK("Typedef");
     *token_at = it;
     return true;
+}
+
+
+/* Warning System */
+
+/* Note: warning_type defined in Lexing and Output section to provide a forward declaration */
+
+void issue_warning(warning_type type, parse_context *context) {
+    static int warning_counts[warning_type_count];
+
+    context->unsupported_count++;
+    warning_counts[type]++;
+
+    if (warning_counts[type] > 1)
+        return;
+
+    switch (type) {
+        case warning_type_goto:
+            printf("Warning: Uses goto construct, which is currently not supported by JAI.\n");
+            printf("   Note: \"goto\" statements and related labels have been left intact.\n");
+            break;
+        case warning_type_switch:
+            printf("Warning: Uses switch construct, which is currently not supported by JAI.\n");
+            printf("   Note: \"switch\", \"case\", and \"default\" statements  have been left intact.\n");
+            break;
+        case warning_type_ternary:
+            printf("Warning: Uses ternary operator, which is currently not supported by JAI.\n");
+            printf("   Note: Ternary statements have been left intact.\n");
+            break;
+        case warning_type_preprocessor:
+            printf("Warning: Uses preprocessor directives that are not currently not supported by JAI.\n");
+            printf("   Note: #include and some of #define are automatically translated, all others are left intact.\n");
+        case warning_type_static_function:
+            printf("Warning: Uses static functions which are not currently not supported by JAI.\n");
+            printf("   Note: Static functions will be defined as normal, with a /* static */ tag before the definition.\n");
+            break;
+        case warning_type_static_variable:
+            printf("Warning: Uses static variables which are not currently not supported by JAI.\n");
+            printf("   Note: Static variables will be defined as normal, with a /* static */ tag before the definition.\n");
+            break;
+        default:
+            break;
+    }
 }
 
 
